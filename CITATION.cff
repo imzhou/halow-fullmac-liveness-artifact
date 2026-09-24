@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+title: halow-fullmac-liveness-artifact
+message: >-
+  If you use this software, please cite it and the associated paper.
+type: software
+abstract: >-
+  Control-plane liveness models, board experiment harness, and raw logs for the
+  paper "When Recovery Breaks Sessions: Liveness Failures across Firmware, Host,
+  and Android in Wi-Fi HaLow FullMAC Stacks". The three models are pure Python 3
+  (standard library only) and regenerate, from a clean clone, the report tables
+  reproduced in the paper.
+authors:
+  - family-names: Zhou
+    given-names: Jifeng
+    affiliation: Shenzhen Root Innovation Technology Co., Ltd.
+  - family-names: Xia
+    given-names: Weian
+    affiliation: Shenzhen Root Innovation Technology Co., Ltd.
+  - family-names: Yuan
+    given-names: Jianjun
+    affiliation: Shenzhen Root Innovation Technology Co., Ltd.
+  - family-names: Zhang
+    given-names: Ying
+    affiliation: Shenzhen Root Innovation Technology Co., Ltd.
+  - family-names: Li
+    given-names: Wenchen
+    affiliation: Shenzhen Root Innovation Technology Co., Ltd.
+repository-code: https://github.com/imzhou/halow-fullmac-liveness-artifact
+license: MIT
+version: 1.0.0
+date-released: "2026-09-24"
+keywords:
+  - Wi-Fi HaLow
+  - IEEE 802.11ah
+  - FullMAC
+  - liveness
+  - model checking
+  - Android
+  - fault recovery
