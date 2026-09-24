@@ -1,73 +1,76 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-HaLow Android FullMAC 控制面形式化模型 + 活性/安全性检验
-=========================================================
+HaLow Android FullMAC control plane: formal model + liveness/safety checking
+===========================================================================
 
-目标
+Goal
 ----
-把 A133(Android 10) + 泰芯 TXW8301 USB FullMAC 的**控制面**建成一个有限状态机，
-穷举可达状态空间，检验：
+Build the control plane of A133 (Android 10) + TaiXin TXW8301 USB FullMAC as a
+finite state machine, enumerate the reachable state space, and check:
 
-  L1 (活性 / Liveness)  从任意可达状态出发，是否存在一条**不含故障注入**的动作序列
-                        回到 STREAMING（视频流正常）。
-                        违反者 = 永久断流反例（liveness counterexample）。
+  L1 (liveness)  From any reachable state, does there exist an action sequence
+                 with no fault injection that returns to STREAMING (video
+                 streaming normal)? Violations are permanent-outage
+                 counterexamples.
 
-  L2 (安全性 / Safety)  是否存在"黑洞态"：接口 admin UP + 有 IP，但数据面不通，
-                        且该状态是**吸收态**（无故障动作下无法离开）。
+  L2 (safety)    Do black-hole states exist: interface admin UP with an IP
+                 address, but the datapath is dead, and the state is absorbing
+                 (no fault-free action leaves it)?
 
-代码证据（每一条转移都对应真实源码行号）
-----------------------------------------
-驱动 hgic_fmac/core.c
-  :777   mod_timer(detect_tmr, +2000ms)                       —— 检测定时器 2s 周期
-  :861   if (!SLEEP && RUNNING) { ... }                       —— SLEEP 置位时**整个检测被跳过**
-  :872   bootdl_cmd_enter 探测固件；失败 → bus->reinit
-  :886   if (RUNNING) mod_timer(...)                          —— RUNNING 清零则定时器链**永久断裂**
+Code evidence (every transition maps to a real source line)
+-----------------------------------------------------------
+Driver hgic_fmac/core.c
+  :777   mod_timer(detect_tmr, +2000ms)                       -- detect timer, 2s period
+  :861   if (!SLEEP && RUNNING) { ... }                       -- SLEEP set skips the whole check
+  :872   bootdl_cmd_enter probes firmware; failure -> bus->reinit
+  :886   if (RUNNING) mod_timer(...)                          -- RUNNING=0 breaks the timer chain for good
   hgic_def.h:47  #define HGIC_DETECT_TIMER 2000
 
-驱动 hgic_fmac/event.c
+Driver hgic_fmac/event.c
   :26    #define HGIC_EVENT_MAX (16)
-  :68-71 队列满则 kfree_skb(skb_dequeue(...)) —— **丢最旧**事件，非丢最新
-  :53-58 HGIC_EVENT_CONECTED / DISCONECTED 的 netif_carrier_on/off **被注释掉**
-         → netdev carrier 恒不变化，事件面与 L4 状态解耦
+  :68-71 queue full -> kfree_skb(skb_dequeue(...))            -- drops the OLDEST event
+  :53-58 netif_carrier_on/off for HGIC_EVENT_CONECTED / DISCONECTED are COMMENTED OUT
+         -> netdev carrier never changes; the event plane is decoupled from L4 state
 
 Android init.device.rc (device/softwinner/ceres-b6)
-  :38    insmod hgicf.ko                       (on boot_completed=1，仅一次)
-  :57    service halow_net_watch ... oneshot   —— 看门狗是 oneshot，退出即永久停止
-  :62-69 on property:rebind_net=1 → exec ip ... ; setprop rebind_net 0
-         —— **fire-and-forget**：ip 命令失败也照样清零，无重试无回执
-  :59    setprop vendor.a133.halow.ready 1     —— 无条件执行，即使 ip 全部失败
-  :105-107 on property:ready=1 → start halow_net_watch
+  :38    insmod hgicf.ko                       (on boot_completed=1, once only)
+  :57    service halow_net_watch ... oneshot   -- oneshot watchdog, exits and never restarts
+  :62-69 on property:rebind_net=1 -> exec ip ... ; setprop rebind_net 0
+         -- fire-and-forget: the property clears even if ip fails, no retry, no ack
+  :59    setprop vendor.a133.halow.ready 1     -- unconditional, even if every ip call fails
+  :105-107 on property:ready=1 -> start halow_net_watch
 
 wifi_halow/halow_net_watch.sh
   :5-6   INTERVAL=5, COOLDOWN=10
-  :17-19 [ ! -d /sys/class/net/hg0 ] → continue     —— 接口消失时**静默跳过**
-  :21    flags=$(cat .../flags) || continue          —— 读取失败也静默跳过
-  :23-25 if (flags & 1) != 0 → continue              —— **只查 admin UP 这一个 bit**
-         → 固件黑洞 / 流控饿死 / 事件溢出 全部不可见
+  :17-19 [ ! -d /sys/class/net/hg0 ] -> continue     -- interface gone is skipped silently
+  :21    flags=$(cat .../flags) || continue          -- a read failure is skipped silently
+  :23-25 if (flags & 1) != 0 -> continue             -- checks exactly one bit, admin UP
+         -> firmware black holes, flow-control starvation, event overflow all stay invisible
 
-作者注：本模型是"忠实抽象"——只保留与活性相关的变量，但每条转移的
-守卫条件都直接对应上述代码行，不做主观简化。
+Author note: this model is a faithful abstraction. It keeps only the variables
+relevant to liveness, but every transition guard maps directly to the source
+lines above, with no subjective simplification.
 """
 
 from collections import namedtuple, deque
 import itertools
 import sys
 
-# ---------------------------------------------------------------- 状态空间
+# ---------------------------------------------------------------- state space
 
 State = namedtuple('State', [
     'iface',   # 0=ABSENT 1=DOWN 2=UP_NOIP 3=UP_IP 4=BLACKHOLE
     'sleep',   # 0/1  HGIC_BUS_FLAGS_SLEEP
-    'fw',      # 0=DEAD 1=LIVE   固件是否响应 bootdl 探测
+    'fw',      # 0=DEAD 1=LIVE   does firmware answer the bootdl probe
     'run',     # 0/1  HGICF_DEV_FLAGS_RUNNING
-    'darm',    # 0/1  detect_tmr 是否已装填
-    'watch',   # 0=WAIT(等 ready) 1=POLL 2=COOLDOWN 3=EXITED
+    'darm',    # 0/1  is detect_tmr armed
+    'watch',   # 0=WAIT (for ready) 1=POLL 2=COOLDOWN 3=EXITED
     'p_ready', # 0/1  vendor.a133.halow.ready
     'p_reb',   # 0/1  vendor.a133.halow.rebind_net
-    'p_init',  # 0/1  setup_net 链已下发
-    'evtq',    # 0/1/2 事件队列 空/部分/满(HGIC_EVENT_MAX)
-    'eloss',   # 0/1  是否发生过事件丢失
+    'p_init',  # 0/1  setup_net chain has run
+    'evtq',    # 0/1/2 event queue empty/partial/full (HGIC_EVENT_MAX)
+    'eloss',   # 0/1  has event loss occurred
 ])
 
 IFACE_NAMES = ['ABSENT', 'DOWN', 'UP_NOIP', 'UP_IP', 'BLACKHOLE']
@@ -80,200 +83,202 @@ FAULT = 1
 
 
 def is_streaming(s: State) -> bool:
-    """正常拉流状态：接口有 IP + 固件活 + 未睡 + RUNNING + 定时器装填 + 看门狗在轮询"""
+    """Streaming normally: interface has IP + firmware live + not asleep + RUNNING
+    + timer armed + watchdog polling"""
     return (s.iface == UI and s.fw == 1 and s.sleep == 0 and s.run == 1
             and s.darm == 1 and s.watch == 1 and s.p_ready == 1)
 
 
-# ---------------------------------------------------------------- 转移定义
+# ---------------------------------------------------------------- transitions
 
 def build_actions(variant='stock'):
     """
-    variant='stock' —— 现网实现（严格照抄上述源码）
-    variant='lhr'   —— 加入 Layered HaLow Recovery 的修补动作
+    variant='stock' -- the implementation as shipped (transcribed from the source above)
+    variant='lhr'   -- adds the Layered HaLow Recovery repair actions
     """
     acts = []
 
     def add(name, kind, guard, apply_, note=''):
         acts.append((name, kind, guard, apply_, note))
 
-    # ---------- 驱动 probe / USB ----------
+    # ---------- driver probe / USB ----------
     add('probe', NORMAL,
         lambda s: s.iface == A,
         lambda s: s._replace(iface=D, run=1, darm=1),
-        'hgicf.ko probe 成功，netdev 创建，detect_tmr 装填 (core.c:777)')
+        'hgicf.ko probe succeeds, netdev created, detect_tmr armed (core.c:777)')
 
-    # USB 重新枚举完成 —— 外部事件，恢复路径允许使用
+    # USB re-enumeration finished -- external event, usable on recovery paths
     add('usb_reenum', NORMAL,
         lambda s: s.iface == A,
         lambda s: s._replace(iface=D),
-        'USB 重枚举，接口重新出现（外部事件，非故障）')
+        'USB re-enumeration, interface reappears (external event, not a fault)')
 
-    # ---------- Android property 链 ----------
+    # ---------- Android property chain ----------
     add('do_setup_net', NORMAL,
         lambda s: s.p_init == 0 and s.iface in (D, UN),
         lambda s: s._replace(iface=UI, p_init=1, p_ready=1),
         'init.rc:87-93  exec ip link set hg0 up + addr add; setprop ready 1')
 
-    # init.rc:59 无条件 setprop ready=1 —— 即便 ip 命令全部失败（a133_init.sh 10s 超时后仍触发）
+    # init.rc:59 sets ready=1 unconditionally -- even if every ip call fails
+    # (still triggered after the a133_init.sh 10s timeout)
     add('do_setup_net_fail', NORMAL,
         lambda s: s.p_init == 0 and s.iface == A,
         lambda s: s._replace(p_init=1, p_ready=1),
-        'init.rc:59 ready=1 无条件置位；接口不存在时 ip 全部失败但 ready 仍为 1')
+        'init.rc:59 ready=1 set unconditionally; with no interface every ip call fails but ready is still 1')
 
-    # rebind：fire-and-forget，执行完无条件 setprop rebind_net 0 (init.rc:69)
+    # rebind: fire-and-forget, then setprop rebind_net 0 unconditionally (init.rc:69)
     def _reb(s):
         if s.iface == A:
-            return s._replace(p_reb=0)          # ip 命令失败，但 property 照样清零
+            return s._replace(p_reb=0)          # ip failed, but the property clears anyway
         return s._replace(iface=UI, p_reb=0)
     add('do_rebind', NORMAL,
         lambda s: s.p_reb == 1,
         _reb,
-        'init.rc:62-69  ip link up + addr replace；失败亦清零，无重试')
+        'init.rc:62-69  ip link up + addr replace; clears on failure too, no retry')
 
     # ---------- halow_net_watch ----------
     add('watch_start', NORMAL,
         lambda s: s.watch == 0 and s.p_ready == 1,
         lambda s: s._replace(watch=1),
-        'init.rc:105-107 start halow_net_watch (oneshot，仅此一次)')
+        'init.rc:105-107 start halow_net_watch (oneshot, this is the only start)')
 
     def _wtick(s):
-        # sh:17  接口不存在 → continue
+        # sh:17  interface absent -> continue
         if s.iface == A:
             return s
-        # sh:23  flags & 1 != 0（admin UP）→ continue
-        #        注意：BLACKHOLE / UP_NOIP 也都是 admin UP，看门狗**看不见**
+        # sh:23  flags & 1 != 0 (admin UP) -> continue
+        #        note: BLACKHOLE / UP_NOIP are admin UP too, the watchdog cannot see them
         if s.iface in (UN, UI, BH):
             return s
-        # sh:27-29 只有 admin DOWN 才触发 rebind，随后 sleep COOLDOWN
+        # sh:27-29 only admin DOWN triggers rebind, then sleep COOLDOWN
         return s._replace(p_reb=1, watch=2)
     add('watch_tick', NORMAL,
         lambda s: s.watch == 1,
         _wtick,
-        'halow_net_watch.sh:14-29  5s 轮询，只检查 IFF_UP 一个 bit')
+        'halow_net_watch.sh:14-29  5s polling, checks exactly one bit (IFF_UP)')
 
     add('watch_cooldown_end', NORMAL,
         lambda s: s.watch == 2,
         lambda s: s._replace(watch=1),
-        'sh:29 sleep $COOLDOWN(10s) 结束')
+        'sh:29 sleep $COOLDOWN(10s) ends')
 
-    # ---------- 驱动 detect_work (2s) ----------
+    # ---------- driver detect_work (2s) ----------
     add('detect_disarm', NORMAL,
         lambda s: s.darm == 1 and s.run == 0,
         lambda s: s._replace(darm=0),
-        'core.c:886 只在 RUNNING 时重排定时器 → RUNNING=0 则定时器链永久断裂')
+        'core.c:886 re-arms the timer only while RUNNING -> RUNNING=0 breaks the timer chain for good')
 
     add('detect_skip_sleep', NORMAL,
         lambda s: s.darm == 1 and s.run == 1 and s.sleep == 1,
         lambda s: s._replace(darm=1),
-        'core.c:861 SLEEP 置位 → 整段检测被跳过，只重新装填定时器')
+        'core.c:861 SLEEP set -> the whole check is skipped, only the timer is re-armed')
 
     add('detect_idle', NORMAL,
         lambda s: s.darm == 1 and s.run == 1 and s.sleep == 0 and s.fw == 1,
         lambda s: s._replace(darm=1),
-        'core.c:861-880 固件响应正常，无动作')
+        'core.c:861-880 firmware answers normally, no action')
 
     add('detect_reinit_ok', NORMAL,
         lambda s: s.darm == 1 and s.run == 1 and s.sleep == 0 and s.fw == 0,
         lambda s: s._replace(fw=1, evtq=0, darm=1),
-        'core.c:872-880 bootdl 探测失败 → bus->reinit → 固件恢复')
+        'core.c:872-880 bootdl probe fails -> bus->reinit -> firmware recovers')
 
     add('detect_reinit_fail', NORMAL,
         lambda s: s.darm == 1 and s.run == 1 and s.sleep == 0 and s.fw == 0,
         lambda s: s._replace(fw=0, run=0, darm=0),
-        'reinit 失败 → RUNNING 被清 → core.c:886 不再重排 → 定时器停摆')
+        'reinit fails -> RUNNING cleared -> core.c:886 stops re-arming -> timer chain stops')
 
-    # ---------- 事件队列 (event.c) ----------
+    # ---------- event queue (event.c) ----------
     add('evt_push', NORMAL,
         lambda s: s.fw == 1 and s.evtq < 2,
         lambda s: s._replace(evtq=s.evtq + 1),
-        'event.c:72 skb_queue_tail 入队')
+        'event.c:72 skb_queue_tail enqueues')
 
     add('evt_overflow', NORMAL,
         lambda s: s.fw == 1 and s.evtq == 2,
         lambda s: s._replace(eloss=1),
-        'event.c:68-70 队列满(16) → 丢**最旧**事件')
+        'event.c:68-70 queue full (16) -> drops the OLDEST event')
 
     add('evt_drain', NORMAL,
         lambda s: s.evtq > 0,
         lambda s: s._replace(evtq=s.evtq - 1),
-        '用户态 daemon 读取事件')
+        'user-space daemon reads events')
 
-    # ------------------------------------------------ 故障注入（仅用于生成可达状态）
+    # ------------------------------------------------ fault injection (only to generate reachable states)
     add('f_usb_out', FAULT,
         lambda s: s.iface != A,
         lambda s: s._replace(iface=A),
-        'USB 断开 / 重枚举中接口消失')
+        'USB disconnect / interface gone during re-enumeration')
 
     add('f_fw_hang', FAULT,
         lambda s: s.fw == 1,
         lambda s: s._replace(fw=0),
-        '固件挂死（F2）')
+        'firmware hangs (F2)')
 
     add('f_sleep_stuck', FAULT,
         lambda s: s.sleep == 0,
         lambda s: s._replace(sleep=1, fw=0),
-        'F1a：suspend 后 SLEEP 标志置位且未清，固件不响应')
+        'F1a: after suspend the SLEEP flag is set and never cleared, firmware unresponsive')
 
     add('f_iface_down', FAULT,
         lambda s: s.iface in (UN, UI, BH),
         lambda s: s._replace(iface=D),
-        'F1b：resume 后 hg0 admin DOWN')
+        'F1b: after resume hg0 is admin DOWN')
 
     add('f_blackhole', FAULT,
         lambda s: s.iface == UI,
         lambda s: s._replace(iface=BH),
-        'F3/F1a：admin UP + 有 IP，但数据面静默（soft_fc 饿死 / 固件睡）')
+        'F3/F1a: admin UP with an IP, but the datapath is silent (soft_fc starved / firmware asleep)')
 
     add('f_evt_burst', FAULT,
         lambda s: s.evtq < 2,
         lambda s: s._replace(evtq=2, eloss=1),
-        'F4：事件突发导致队列溢出，关键事件被挤掉')
+        'F4: event burst overflows the queue, critical events pushed out')
 
     add('f_run_clear', FAULT,
         lambda s: s.run == 1,
         lambda s: s._replace(run=0),
-        'RUNNING 标志被清（reinit 路径 / 异常卸载）')
+        'RUNNING flag cleared (reinit path / abnormal unload)')
 
     add('f_watch_exit', FAULT,
         lambda s: s.watch in (1, 2),
         lambda s: s._replace(watch=3),
-        'halow_net_watch 是 oneshot service，异常退出后不再重启')
+        'halow_net_watch is a oneshot service; after an abnormal exit it never restarts')
 
-    # ------------------------------------------------ LHR 修补动作
+    # ------------------------------------------------ LHR repair actions
     if variant == 'lhr':
         add('LHR_probe_blackhole', NORMAL,
             lambda s: s.watch == 1 and s.iface == BH,
             lambda s: s._replace(p_reb=1, watch=2),
-            'LHR-D1：看门狗加数据面探针，黑洞可见（不再只看 admin UP）')
+            'LHR-D1: the watchdog adds a datapath probe; black holes become visible (no longer admin UP only)')
 
         add('LHR_rebind_strong', NORMAL,
             lambda s: s.p_reb == 1 and s.iface == BH,
             lambda s: s._replace(iface=UI, p_reb=0, sleep=0, fw=1, run=1, darm=1),
-            'LHR-A2：rebind 下沉到驱动，清 SLEEP + 触发 warm reinit')
+            'LHR-A2: rebind pushed down into the driver, clears SLEEP + triggers warm reinit')
 
         add('LHR_sleep_liveness', NORMAL,
             lambda s: s.darm == 1 and s.run == 1 and s.sleep == 1,
             lambda s: s._replace(sleep=0),
-            'LHR-D2：检测不再被 SLEEP 屏蔽，限时探测并主动清除卡死的 SLEEP')
+            'LHR-D2: detection is no longer masked by SLEEP; time-boxed probing actively clears a stuck SLEEP')
 
         add('LHR_timer_guard', NORMAL,
             lambda s: s.run == 0,
             lambda s: s._replace(run=1, darm=1),
-            'LHR-D3：控制面监督器检测 RUNNING/detect_tmr 停摆并重新装填')
+            'LHR-D3: a control-plane supervisor detects a stalled RUNNING/detect_tmr and re-arms it')
 
         add('LHR_watch_restart', NORMAL,
             lambda s: s.watch == 3,
             lambda s: s._replace(watch=1),
-            'LHR-D4：看门狗自身受守护，EXITED 后自动重启')
+            'LHR-D4: the watchdog is itself guarded and restarts automatically after EXITED')
 
     return acts
 
 
-# ---------------------------------------------------------------- 图搜索
+# ---------------------------------------------------------------- graph search
 
 def explore(actions, init):
-    """从 init 出发做 BFS（允许故障），返回 dist / parent / 转移边"""
+    """BFS from init (faults allowed), returns dist / parent / transition edges"""
     dist = {init: 0}
     parent = {init: None}
     q = deque([init])
@@ -293,8 +298,9 @@ def explore(actions, init):
 
 
 def can_reach_streaming(actions, states):
-    """在**只允许 NORMAL 动作**的图上，求能到达 STREAMING 的状态集合（反向可达）"""
-    # 建正向邻接（只含 NORMAL）
+    """On the graph allowing NORMAL actions only, the set of states that can reach
+    STREAMING (backward reachability)"""
+    # build forward adjacency (NORMAL only)
     adj = {s: [] for s in states}
     for s in states:
         for name, kind, guard, apply_, note in actions:
@@ -304,7 +310,7 @@ def can_reach_streaming(actions, states):
                 t = apply_(s)
                 if t in adj:
                     adj[s].append((name, t))
-    # 反向 BFS
+    # backward BFS
     rev = {s: [] for s in states}
     for s in states:
         for name, t in adj[s]:
@@ -347,27 +353,43 @@ def fmt(s: State) -> str:
 
 
 def classify(s: State) -> str:
-    """给反例打上机理性标签"""
+    """Attach mechanism labels to a counterexample"""
     tags = []
     if s.iface == BH:
-        tags.append('数据面黑洞（admin UP 但有 IP 无流）')
+        tags.append('Data black hole (admin UP, has IP, no flow)')
     if s.iface == A:
-        tags.append('接口消失')
+        tags.append('Interface gone')
     if s.watch == 3:
-        tags.append('看门狗已退出(oneshot)')
+        tags.append('Watch exited (oneshot)')
     if s.watch == 0:
-        tags.append('看门狗从未启动')
+        tags.append('Watch never started')
     if s.sleep == 1:
-        tags.append('SLEEP 卡死屏蔽自检')
+        tags.append('Stuck SLEEP masks self-check')
     if s.run == 0:
         tags.append('RUNNING=0')
     if s.darm == 0:
-        tags.append('detect_tmr 停摆')
+        tags.append('detect_tmr chain dead')
     if s.fw == 0:
-        tags.append('固件无响应')
+        tags.append('Firmware unresponsive')
     if s.iface in (UI, UN) and s.watch == 1:
-        tags.append('看门狗认为一切正常(admin UP)')
-    return ' + '.join(tags) if tags else '未分类'
+        tags.append('Watch thinks all is well (admin UP)')
+    return ' + '.join(tags) if tags else 'unclassified'
+
+
+def _lc(tag):
+    """Lowercase a tag's first letter, unless the tag starts with an acronym (RUNNING=0)."""
+    return tag if len(tag) > 1 and tag[1].isupper() else tag[0].lower() + tag[1:]
+
+
+def mech(s: State) -> str:
+    """Mechanism string for table cells: first tag verbatim, the rest in sentence case."""
+    tags = classify(s).split(' + ')
+    return ' + '.join([tags[0]] + [_lc(t) for t in tags[1:]])
+
+
+def mech_inline(s: State) -> str:
+    """Mechanism string used mid-sentence: every tag in sentence case."""
+    return ' + '.join(_lc(t) for t in classify(s).split(' + '))
 
 
 def run(variant):
@@ -380,7 +402,7 @@ def run(variant):
 
     bad = sorted((s for s in states if s not in good),
                  key=lambda s: (dist[s], fmt(s)))
-    # 吸收态：在无故障（NORMAL）动作下没有任何出边
+    # absorbing: no outgoing edge under fault-free (NORMAL) actions
     def has_normal_exit(s):
         for name, kind, guard, apply_, note in actions:
             if kind == NORMAL and guard(s):
@@ -397,57 +419,59 @@ def main():
     out = []
     W = out.append
 
-    W("# HaLow 控制面形式化检验报告\n")
-    W("> 模型：`A/control_plane_model.py` ｜ 方法：穷举可达状态空间 + 反向可达性（活性检验）\n")
+    W("# HaLow control-plane model checking report\n")
+    W("> Model: `models/control_plane_model.py`. Method: exhaustive reachable state space plus backward reachability (liveness check).\n")
 
     results = {}
     for variant in ('stock', 'lhr'):
         results[variant] = run(variant)
 
     st = results['stock']
-    W("## 0. 模型规模\n")
-    W(f"- 状态变量：{len(State._fields)} 个（iface / sleep / fw / run / darm / watch / 3 个 property / 事件队列 / 丢失标记）")
-    W(f"- stock 变体动作数：{len(st['actions'])}（含 9 个故障注入）")
-    W(f"- **可达状态数：{len(st['states'])}**")
-    W(f"- 可达转移边数：{len(st['edges'])}")
-    W(f"- 初始状态：`{fmt(st['init'])}`\n")
+    W("## 0. Model size\n")
+    W(f"- State variables: {len(State._fields)} (iface / sleep / fw / run / darm / watch / 3 properties / event queue / loss flag)")
+    W(f"- Stock variant actions: {len(st['actions'])} (including 9 fault injections)")
+    W(f"- Reachable states: {len(st['states'])}")
+    W(f"- Reachable transition edges: {len(st['edges'])}")
+    W(f"- Initial state: `{fmt(st['init'])}`\n")
 
-    W("## 1. 活性检验结果（stock = 现网实现）\n")
+    W("## 1. Liveness check (stock = the implementation as shipped)\n")
     n_bad = len(st['bad'])
-    W(f"**违反活性（永久断流）的可达状态：{n_bad} / {len(st['states'])} "
-      f"（{100.0*n_bad/len(st['states']):.1f}%）**\n")
+    W(f"Reachable states that violate liveness (permanent outage): "
+      f"**{n_bad} / {len(st['states'])} ({100.0*n_bad/len(st['states']):.1f}%)**\n")
     if n_bad:
-        W("也就是说：现网控制面**存在大量可达的永久断流状态**——"
-          "从这些状态出发，无论系统自身如何运转（不借助人工外力），都回不到正常拉流。\n")
+        W("In other words, the stock control plane has a large set of reachable permanent-outage "
+          "states. Once in one of them, no matter how the system runs by itself (with no human "
+          "help), it never returns to normal streaming.\n")
 
-    W("### 1.1 最短反例（从初始状态出发需要的最少动作数）\n")
-    W("| # | 步数 | 状态 | 机理 | 最短触发路径 |")
-    W("|---|------|------|------|--------------|")
+    W("### 1.1 Shortest counterexamples (minimum action count from the initial state)\n")
+    W("| # | Steps | State | Mechanism | Shortest trigger path |")
+    W("|---|-------|-------|-----------|----------------------|")
     shown = st['bad'][:12]
     for i, s in enumerate(shown, 1):
         p = path_to(st['parent'], st['init'], s)
-        W(f"| {i} | {len(p)} | `{fmt(s)}` | {classify(s)} | {' → '.join(p) if p else '(初始)'} |")
+        ptxt = " -> ".join(f"`{x}`" for x in p) if p else "(initial)"
+        W(f"| {i} | {len(p)} | `{fmt(s)}` | {mech(s)} | {ptxt} |")
     W("")
 
-    W("### 1.2 反例机理归类（按状态特征统计）\n")
+    W("### 1.2 Counterexample mechanisms (counted over states)\n")
     from collections import Counter
     cnt = Counter()
     for s in st['bad']:
         for t in classify(s).split(' + '):
             cnt[t] += 1
-    W("| 机理 | 涉及状态数 |")
-    W("|------|-----------|")
+    W("| Mechanism | States |")
+    W("|-----------|--------|")
     for t, c in cnt.most_common():
         W(f"| {t} | {c} |")
     W("")
 
-    W("### 1.3 典型反例详解\n")
+    W("### 1.3 Worked counterexamples\n")
     picks = []
     want = [
-        ('黑洞吸收态', lambda s: s.iface == BH and s.fw == 1 and s.watch == 1),
-        ('SLEEP 屏蔽自检', lambda s: s.sleep == 1 and s.iface == BH),
-        ('看门狗退出', lambda s: s.watch == 3),
-        ('定时器链断裂', lambda s: s.run == 0 and s.darm == 0),
+        ('Black-hole absorbing state', lambda s: s.iface == BH and s.fw == 1 and s.watch == 1),
+        ('SLEEP masks self-check', lambda s: s.sleep == 1 and s.iface == BH),
+        ('Watch exit', lambda s: s.watch == 3),
+        ('Timer chain break', lambda s: s.run == 0 and s.darm == 0),
     ]
     for label, pred in want:
         cand = [s for s in st['bad'] if pred(s)]
@@ -456,38 +480,40 @@ def main():
             picks.append((label, cand[0]))
     for label, s in picks:
         p = path_to(st['parent'], st['init'], s)
-        W(f"**{label}** — 最短 {len(p)} 步：\n")
+        W(f"**{label}** ({len(p)} steps):\n")
         W("```")
-        W("  " + " → ".join(p) if p else "  (初始状态)")
-        W(f"  ⇒ {fmt(s)}")
+        W("  " + " -> ".join(p) if p else "  (initial state)")
+        W(f"  => {fmt(s)}")
         W("```")
-        W(f"- 机理：{classify(s)}")
-        W(f"- 为何回不去：")
+        W("")
+        W(f"- Mechanism: {mech_inline(s)}")
+        W(f"- Why it cannot return:")
         if s.iface == BH and s.fw == 1:
-            W("  - `halow_net_watch.sh:23` 只查 `flags & 1`，黑洞态 admin UP → `continue`，看门狗看不见")
-            W("  - `core.c:861` detect_work 只在 `!SLEEP && fw 无响应` 时动作；此处 fw=LIVE，不触发 reinit")
-            W("  - 于是**没有任何组件会改变数据面**，黑洞被永久保持")
+            W("  - `halow_net_watch.sh:23` only checks `flags & 1`. The black-hole state is admin UP, so the loop `continue`s and the watch never sees it.")
+            W("  - `core.c:861` `detect_work` only acts when `!SLEEP && fw unresponsive`. Here fw=LIVE, so no reinit fires.")
+            W("  - Nothing else touches the datapath, so the black hole persists forever.")
         if s.sleep == 1:
-            W("  - `core.c:861` `if (!SLEEP && RUNNING)`：SLEEP 置位时整段检测被跳过，只重排定时器")
-            W("  - 固件睡死 → SLEEP 永不清除 → 驱动自检永久空转")
+            W("  - `core.c:861` `if (!SLEEP && RUNNING)`: with SLEEP set the whole check is skipped and only the timer is re-armed.")
+            W("  - If the firmware sleeps to death, SLEEP never clears and the driver self-check spins forever.")
         if s.watch == 3:
-            W("  - `init.rc:57` halow_net_watch 是 `oneshot` service，退出后不再重启")
-            W("  - 此后无人再触发 rebind")
+            W("  - `init.rc:57` registers `halow_net_watch` as a oneshot service; once it exits it is never restarted.")
+            W("  - Nobody triggers rebind afterwards.")
         if s.run == 0:
-            W("  - `core.c:886` `if (RUNNING) mod_timer(...)`：RUNNING=0 → 定时器不再装填 → 自检链永久停摆")
+            W("  - `core.c:886` `if (RUNNING) mod_timer(...)`: with RUNNING=0 the timer is never re-armed and the self-check chain stops for good.")
         W("")
 
-    # ---------------- 稳态单次故障分析（论文 headline 用） ----------------
-    W("### 1.4 稳态单次故障反例（headline 结论）\n")
-    W("上面的统计混入了冷启动竞态。论文最需要的是这一类："
-      "**系统已经处于正常拉流（STREAMING），仅注入一次故障，此后系统再也无法自愈。**\n")
+    # ---------------- steady-state single-fault analysis (paper headline) ----------------
+    W("### 1.4 Steady-state single-fault counterexamples (headline result)\n")
+    W("The statistics above mix in cold-start races. What the paper needs most is this class: "
+      "the system is already streaming normally (`STREAMING`), a single fault is injected, and "
+      "from then on it cannot heal itself.\n")
 
     streaming_states = [s for s in st['states'] if is_streaming(s)]
-    W(f"- 可达的 STREAMING 状态数：{len(streaming_states)}")
+    W(f"- Reachable STREAMING states: {len(streaming_states)}")
 
-    single = {}   # (故障名, 机理) -> 示例状态
+    single = {}   # (fault name, mechanism) -> example state
     hard, latent = [], []
-    for s in streaming_states:
+    for s in sorted(streaming_states, key=tuple):
         for name, kind, guard, apply_, note in st['actions']:
             if kind != FAULT or not guard(s):
                 continue
@@ -497,57 +523,65 @@ def main():
             key = name
             if key not in single:
                 single[key] = (s, t, st['dist'][s])
-            # 分类
+            # classify
             is_hard = (t.iface != UI) or (t.fw == 0) or (t.sleep == 1)
             (hard if is_hard else latent).append((name, s, t))
 
-    W(f"- 能造成**单次故障即永久断流**的故障类型数：**{len(single)} / 9**\n")
+    W(f"- Fault types that cause permanent outage from a single injection: **{len(single)} / 9**\n")
     if single:
-        W("| 故障注入 | 注入后状态 | 机理 | 硬断流? |")
-        W("|----------|-----------|------|---------|")
+        W("| Fault injection | State after | Mechanism | Hard outage? |")
+        W("|-----------------|-------------|-----------|--------------|")
         for name, (s, t, _d) in sorted(single.items()):
             is_hard = (t.iface != UI) or (t.fw == 0) or (t.sleep == 1)
-            W(f"| `{name}` | `{fmt(t)}` | {classify(t)} | "
-              f"{'是（数据面已不可用）' if is_hard else '否（能力丧失：此刻仍在流，但已失去自愈能力）'} |")
+            W(f"| `{name}` | `{fmt(t)}` | {mech(t)} | "
+              f"{'Yes (datapath unusable at once)' if is_hard else 'No (capability loss: still streaming, but self-healing is gone)'} |")
         W("")
 
-    W(f"- **硬断流**（数据面当场不可用）：{len(hard)} 个 (故障,状态) 组合")
-    W(f"- **能力丧失**（此刻仍在拉流，但恢复能力已丢失，下次故障必断）：{len(latent)} 个组合\n")
+    W(f"- **Hard outage** (datapath unusable at once): {len(hard)} (fault, state) pairs")
+    W(f"- **Capability loss** (still streaming, but recovery capability is gone; the next fault "
+      f"will kill it): {len(latent)} pairs\n")
     if latent:
-        W("> 「能力丧失」是本模型最值得强调的一类：**系统当前看起来完全正常，"
-          "监控指标全绿，但它已经不再具备从任何故障中恢复的能力**。"
-          "这类状态在传统可用性测量中会被完全漏掉——uptime 是 100%，实际脆弱度是 100%。\n")
+        W("> Capability loss is the class this model is most worth emphasizing: the system looks "
+          "completely normal, every monitoring light is green, yet it can no longer recover from "
+          "any fault. Traditional availability measurements miss these states entirely. Uptime "
+          "reads 100% while actual fragility is 100%.\n")
 
-    W("## 2. 对照：LHR 修补后的活性\n")
+    W("## 2. Comparison: liveness after the LHR repair\n")
     lh = results['lhr']
-    W(f"- LHR 变体动作数：{len(lh['actions'])}（新增 5 个修补动作）")
-    W(f"- 可达状态数：{len(lh['states'])}")
-    W(f"- **违反活性的状态：{len(lh['bad'])}**")
+    W(f"- LHR variant actions: {len(lh['actions'])} (5 repair actions added)")
+    W(f"- Reachable states: {len(lh['states'])}")
+    W(f"- Liveness violations: **{len(lh['bad'])}**")
     if not lh['bad']:
-        W("\n✅ **修补后活性成立**：在同样的故障注入集合下，"
-          "所有可达状态都能在不借助外力（不含故障动作）的前提下回到 STREAMING。")
-        W("\n这条对比就是论文的方法学闭环：")
-        W("stock 有大量永久断流状态 → LHR 为 0，且该结论是**穷举证明**而非抽样测量。\n")
+        W("\nWith the repair, liveness holds: under the same fault injection set, every reachable "
+          "state returns to STREAMING without outside help (fault actions excluded).")
+        W("\nThis comparison closes the methodological loop for the paper. Stock has many "
+          "permanent-outage states, LHR has zero, and the result is an exhaustive proof rather "
+          "than sampled measurement.\n")
     else:
-        W("\n⚠️ LHR 仍有反例，需要补动作：\n")
+        W("\nLHR still has counterexamples; more repair actions are needed:\n")
         for s in lh['bad'][:10]:
             p = path_to(lh['parent'], lh['init'], s)
-            W(f"- `{fmt(s)}` ｜ {classify(s)} ｜ 路径：{' → '.join(p)}")
+            W(f"- `{fmt(s)}` | {classify(s)} | path: {' -> '.join(p)}")
+        W("")
 
-    W("\n## 3. 安全性检验（黑洞态）\n")
+    W("## 3. Safety check (black-hole states)\n")
     bh_stock = [s for s in st['states'] if s.iface == BH]
-    W(f"- stock 可达黑洞状态数：{len(bh_stock)}")
-    W(f"- 其中违反活性：{len([s for s in bh_stock if s not in st['good']])}")
-    W("- 结论：黑洞态一旦进入几乎必然不可自愈，因为观测面只见 admin UP，**故障不可区分**。\n")
+    W(f"- Reachable stock black-hole states: {len(bh_stock)}")
+    W(f"- Of those, liveness violations: {len([s for s in bh_stock if s not in st['good']])}")
+    W("- Conclusion: once a black-hole state is entered it is almost certainly not self-healing, "
+      "because the observation plane only sees admin UP. The faults are indistinguishable.\n")
 
-    W("## 4. 对论文的产出\n")
-    W("1. **否定结果（可证明）**：轮询 + 冷却 + 单向观测 + 丢旧事件队列这一组合，"
-      "在可达状态空间中产生非空且规模可观的永久断流状态集。这是**设计模式的性质**，"
-      "与泰芯/A133 无关，正面回应外部有效性质疑。")
-    W("2. **可迁移设计原则**：LHR 的 4 条修补（数据面探针 / 检测不被 SLEEP 屏蔽 / "
-      "定时器守护 / 看门狗自守护）各自对应一类活性反例，缺一不可。")
-    W("3. **实验角色转变**：真机注入实验不再是论文全部，而是对形式结论的**验证**——"
-      "模型预测的反例路径，逐条在板端复现。")
+    W("## 4. What the paper takes from this\n")
+    W("1. A provable negative result. The combination of polling, cooldown, one-way observation, "
+      "and drop-oldest event queues produces a non-empty, sizable set of permanent-outage states "
+      "in the reachable state space. This is a property of the design pattern and is independent "
+      "of TaiXin/A133, which answers external-validity doubts head-on.")
+    W("2. Transferable design principles. The four LHR repairs (datapath probe, detect not masked "
+      "by SLEEP, timer guard, self-guarding watch) each map to one liveness counterexample class, "
+      "and none is redundant.")
+    W("3. The role of experiments changes. On-device injection is no longer the whole paper but a "
+      "validation of the formal result: the model's counterexample paths are reproduced one by "
+      "one on the board.")
     W("")
 
     text = "\n".join(out)

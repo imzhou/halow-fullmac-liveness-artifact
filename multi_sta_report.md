@@ -1,104 +1,96 @@
-# 多 STA 场景：会话级活性检验报告
+# Multi-STA scenario: session-level liveness report
 
-> 模型 `A/multi_sta_model.py` ｜ 部署：A133 平板 = HaLow AP，N 路摄像头 = STA
+> Model: `models/multi_sta_model.py`. Deployment: A133 tablet = HaLow AP, N cameras = STAs.
 
-## 1. 各 N 下的活性违反规模
+## 1. Scale of liveness violations per N
 
-反例按成因分两类：
+Counterexamples fall into two causes:
 
-- **丢失型**：事件被 `event.c:68-71` 丢弃 → 认知与真实偏离。**多 STA 特有**，是本模型的核心
-- **reinit 型**：固件 reinit 清空 STA 表（`n_known=0`）而真实 STA 仍在射频上
+- **Loss type**: events dropped at `event.c:68-71`, so knowledge diverges from reality. Specific to multi-STA and the core of this model.
+- **Reinit type**: firmware reinit wipes the STA table (`n_known=0`) while the real STAs are still on the air.
 
-| 摄像头数 N | 可达状态 | 违反活性 | 占比 | 丢失型 | reinit 型 | 丢失型最小触发路径 |
-|---|---|---|---|---|---|---|
-| 2 | 153 | **68** | 44.4% | 34 | 34 | sta_leave → fw_reinit → sta_join |
-| 4 | 425 | **272** | 64.0% | 204 | 68 | sta_leave → fw_reinit → sta_join |
-| 8 | 1377 | **1088** | 79.0% | 952 | 136 | sta_leave → fw_reinit → sta_join |
-| 12 | 2873 | **2448** | 85.2% | 2244 | 204 | sta_leave → fw_reinit → sta_join |
-| 16 | 4913 | **4352** | 88.6% | 4080 | 272 | sta_leave → fw_reinit → sta_join |
-| 20 | 7497 | **6800** | 90.7% | 6460 | 340 | sta_leave → fw_reinit → sta_join |
-| 24 | 10625 | **9792** | 92.2% | 9384 | 408 | sta_leave → fw_reinit → sta_join |
+| Cameras N | Reachable states | Liveness violations | Share | Loss type | Reinit type | Shortest loss-type trigger |
+|-----------|------------------|---------------------|-------|-----------|-------------|----------------------------|
+| 2 | 153 | 68 | 44.4% | 34 | 34 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 4 | 425 | 272 | 64.0% | 204 | 68 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 8 | 1377 | 1088 | 79.0% | 952 | 136 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 12 | 2873 | 2448 | 85.2% | 2244 | 204 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 16 | 4913 | 4352 | 88.6% | 4080 | 272 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 20 | 7497 | 6800 | 90.7% | 6460 | 340 | `sta_leave` -> `fw_reinit` -> `sta_join` |
+| 24 | 10625 | 9792 | 92.2% | 9384 | 408 | `sta_leave` -> `fw_reinit` -> `sta_join` |
 
-> 违反比例随 N 单调上升（44% → 92%）：**摄像头越多，控制面越容易进入不可自愈状态**。
-> 这条曲线本身就是可扩展性结论，且不需要额外硬件——纯模型即可得出。
+> The violation share climbs monotonically with N (44% to 92%): more cameras make it easier for the control plane to enter a state it cannot heal. The curve is itself a scalability result, and it costs no extra hardware. The model alone yields it.
 
-## 2. stock 下的核心结论
+## 2. Core result under stock
 
-以 N=8 为例：可达状态 1377，其中 **1088 个**违反会话级活性。
+At N=8: 1377 reachable states, **1088** of which violate session-level liveness.
 
-反例的共同特征：**n_assoc > 0 且 n_known ≠ n_assoc**——即「摄像头在线，但 AP 侧的认知与真实不一致」。
+Shared trait of the counterexamples: `n_assoc > 0` and `n_known != n_assoc`. The cameras are online, but what the AP believes diverges from reality.
 
-### 为什么回不去
+### Why it cannot return
 
-- `evt_drain` 只消费队列，**不修正已经形成的认知偏差**（丢事件不留痕，`procfs.c:34` 只有当前长度）
-- `fw_reinit` 把 STA 表清空（n_known=0），但射频上的摄像头还在 → 偏差变成 `n_assoc`，**更大**
-- `init.rc:62-69` 的 rebind 只是 L3/L4 的 `ip link up` + `addr replace`，**不触及驱动 STA 表**
-- `halow_net_watch.sh:23` 只看 `flags & 1`，**从不查询 `sta_count`**（`iwpriv.c:1739` 明明可用）
+- `evt_drain` only consumes the queue; it never corrects a knowledge divergence that already formed (dropped events leave no trace; `procfs.c:34` shows only the current length).
+- `fw_reinit` wipes the STA table (`n_known=0`) while the cameras are still on the air, so the divergence becomes `n_assoc` and gets larger.
+- The rebind in `init.rc:62-69` only does L3/L4 `ip link up` + `addr replace`. It never touches the driver STA table.
+- `halow_net_watch.sh:23` only looks at `flags & 1` and never queries `sta_count` (`iwpriv.c:1739` provides it).
 
-### 最小反例详解：`sta_leave → fw_reinit → sta_join`
+### Smallest counterexample: `sta_leave` -> `fw_reinit` -> `sta_join`
 
-这是 N=2..24 全部取值下共同的最短反例，三步，且**每一步都是真实会发生的**：
+This is the shortest counterexample for every N from 2 to 24, three steps, and every step happens in practice:
 
-| 步 | 动作 | n_assoc | n_known | 说明 |
-|---|---|---|---|---|
-| 0 | 初始 | N | N | N 路摄像头全部在线，认知一致 |
-| 1 | `sta_leave` | N-1 | N-1 | 一路摄像头掉线，事件入队，认知同步 |
-| 2 | `fw_reinit` | N-1 | **0** | 驱动触发固件 reinit，STA 表被清空 |
-| 3 | `sta_join` | N | **1** | 那一路摄像头回来了，产生 CONNECTED 事件 |
+| Step | Action | n_assoc | n_known | What happens |
+|------|--------|---------|---------|--------------|
+| 0 | Initial | N | N | All N cameras online, knowledge matches |
+| 1 | `sta_leave` | N-1 | N-1 | One camera drops, event queued, knowledge still in sync |
+| 2 | `fw_reinit` | N-1 | 0 | Driver triggers firmware reinit, STA table wiped |
+| 3 | `sta_join` | N | 1 | That camera returns, producing a CONNECTED event |
 
-**关键在第 3 步**：另外 N-1 路摄像头**从未离开**，它们认为自己还连着，
-因此不会重新关联、**不会产生任何事件**。而它们的记录已在第 2 步被清空。
-于是 AP 侧永久只认得 1 路，另外 N-1 路的会话全部静默死亡。
+Step 3 is the crux. The other N-1 cameras never left. They still believe they are associated, so they never re-associate and never produce events. Their records were erased in step 2. The AP now knows one camera forever, and the other N-1 sessions die silently.
 
-> **恢复机制本身制造了更严重的故障**：驱动为了自愈而做的 reinit，
-> 把「1 路掉线」放大成「N-1 路永久掉线」。放大倍数 = N-1。
+> The recovery mechanism itself creates the worse failure. The reinit the driver performs to heal itself turns "one camera dropped" into "N-1 cameras permanently gone". The amplification factor is N-1.
 
-这个反例不需要丢事件、不需要队列溢出，只要触发一次 reinit 就成立——而 `core.c:872-880` 的 detect_work 在固件探测失败时**必然**触发 reinit。
+This counterexample needs no dropped events and no queue overflow. One reinit is enough, and `detect_work` at `core.c:872-880` triggers reinit whenever the firmware probe fails.
 
-### 偏差粘性（可证性质）
+### Divergence stickiness (provable property)
 
-记 `d = n_known - n_assoc`。事件不丢时，`sta_join`/`sta_leave` 让两者同步 ±1，**d 不变**；
-事件丢失时 d 单向偏移。因此：
+Let `d = n_known - n_assoc`. Without event loss, `sta_join`/`sta_leave` move both sides by the same step, so d is unchanged. With event loss, d drifts in one direction. Therefore:
 
-> **d ≠ 0 一旦产生，除“恰好再丢一个符号相反的事件”这种不可控巧合外，d 不会缩小。**
+> Once d != 0 appears, d does not shrink, except through the uncontrolled coincidence of dropping one more event with the opposite sign.
 
-注意：把摄像头自发重连算作恢复机制是错的——重连产生的事件同样可能丢，
-而且 d 对 join/leave 是粘性的，重连不会消除已有偏差。
+Counting on the camera's spontaneous reconnect as a recovery mechanism is wrong. Reconnect events can be dropped too, and d is sticky under join/leave, so a reconnect does not cancel an existing divergence.
 
-## 3. 突发去关联时的事件丢失（排队论）
+## 3. Event loss under bursty disassociation (queueing)
 
-N 路摄像头同时去关联（AP 重启 / 射频中断 / 集体掉电）会瞬间产生 N 个事件。
-队列容量 16（`event.c:26`），丢最旧（`event.c:68-71`）：
+N cameras disassociating at once (AP restart, radio outage, mass power cut) produce N events instantly. Queue capacity is 16 (`event.c:26`) and the oldest is dropped (`event.c:68-71`):
 
-| N | 队列空闲时丢失数 | 已有 4 个积压时 | 已有 8 个积压时 | 后果 |
-|---|---|---|---|---|
-| 4 | 0 | 0 | 0 | 不丢 |
-| 8 | 0 | 0 | 0 | 不丢 |
-| 12 | 0 | 0 | 4 | 不丢 |
-| 16 | 0 | 4 | 8 | 空闲时不丢，有积压则丢 |
-| 20 | 4 | 8 | 12 | 必然产生陈旧条目 → 至少一路永久断流 |
-| 24 | 8 | 12 | 16 | 必然产生陈旧条目 → 至少一路永久断流 |
+| N | Lost with empty queue | With 4 backlogged | With 8 backlogged | Consequence |
+|---|----------------------|-------------------|-------------------|-------------|
+| 4 | 0 | 0 | 0 | No loss |
+| 8 | 0 | 0 | 0 | No loss |
+| 12 | 0 | 0 | 4 | Loss only with a deep backlog |
+| 16 | 0 | 4 | 8 | No loss at idle, loss with backlog |
+| 20 | 4 | 8 | 12 | Stale entries guaranteed, at least one camera permanently out |
+| 24 | 8 | 12 | 16 | Stale entries guaranteed, at least one camera permanently out |
 
-> **临界点：N > 16 时，一次全网重连必然丢事件**——这不是概率问题，是容量硬约束。丢掉的每一个 DISCONNECTED/CONNECTED 都对应一路摄像头的永久状态偏差。
+> The threshold: above N = 16, one network-wide reconnect necessarily drops events. This is not a probability question but a hard capacity constraint. Every dropped DISCONNECTED/CONNECTED corresponds to a permanent state divergence for one camera.
 
-## 4. LHR 修补后的对照
+## 4. Comparison after the LHR repair
 
-| N | stock 违反活性 | LHR 违反活性 |
-|---|---|---|
-| 2 | 68 | **0** |
-| 4 | 272 | **0** |
-| 8 | 1088 | **0** |
-| 12 | 2448 | **0** |
-| 16 | 4352 | **0** |
-| 20 | 6800 | **0** |
-| 24 | 9792 | **0** |
+| N | Stock liveness violations | LHR liveness violations |
+|---|---------------------------|-------------------------|
+| 2 | 68 | 0 |
+| 4 | 272 | 0 |
+| 8 | 1088 | 0 |
+| 12 | 2448 | 0 |
+| 16 | 4352 | 0 |
+| 20 | 6800 | 0 |
+| 24 | 9792 | 0 |
 
-LHR 只加了一条动作：**周期性查询 `iwpriv sta_count` 并与真实在线数对账**
-（`LHR-A3`）。成本是一个 iwpriv 命令，不需要改驱动。
+LHR adds exactly one action: periodically query `iwpriv sta_count` and reconcile against the true online count (`LHR-A3`). The cost is one iwpriv command and no driver change.
 
-## 5. 对论文的增量
+## 5. What this adds to the paper
 
-1. **反例从「整口断流」升级为「部分会话永久断流」**——接口层 flags/IP/丢包率全部正常，N-1 路摄像头正常拉流，只有第 k 路永久死。这类故障任何接口级看门狗都测不出来。
-2. **给出容量硬临界**：N > 16 时单次全网重连必然不一致。把 `evt_list=16` 从一个实现细节升格为**可扩展性约束**——这正是 C1（真实可扩展性）的排队论切入点。
-3. **观测能力的不对称被坐实**：STA 状态技术上可查（`sta_list`/`sta_count`），但现有恢复链路完全没用它；而丢事件本身又不留计数器。→ A2（可观测性）的论断从「信息不足」精确为「信息存在但未被采集 + 丢失不可追溯」。
-4. **修补成本极低**：一条 iwpriv 查询即可让会话级活性成立，无需改驱动。“高影响、低成本”是很好的论文卖点。
+1. Counterexamples upgrade from "whole-port outage" to "permanent loss of individual sessions". Interface-level flags/IP/packet-loss all look normal, N-1 cameras stream fine, only the k-th is permanently dead. No interface-level watchdog can detect this.
+2. A hard capacity threshold. Above N = 16 a single network-wide reconnect is necessarily inconsistent. `evt_list=16` turns from an implementation detail into a scalability constraint, which is the queueing entry point for the real-scalability angle.
+3. The asymmetry of observability is nailed down. STA state is technically queryable (`sta_list`/`sta_count`), but the existing recovery chain never uses it, and dropped events leave no counter. The observability claim sharpens from "not enough information" to "the information exists but is not collected, and the loss is not traceable".
+4. The repair is cheap. One iwpriv query makes session-level liveness hold, with no driver change. High impact at low cost is a good selling point.

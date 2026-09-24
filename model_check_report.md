@@ -1,137 +1,139 @@
-# HaLow 控制面形式化检验报告
+# HaLow control-plane model checking report
 
-> 模型：`A/control_plane_model.py` ｜ 方法：穷举可达状态空间 + 反向可达性（活性检验）
+> Model: `models/control_plane_model.py`. Method: exhaustive reachable state space plus backward reachability (liveness check).
 
-## 0. 模型规模
+## 0. Model size
 
-- 状态变量：11 个（iface / sleep / fw / run / darm / watch / 3 个 property / 事件队列 / 丢失标记）
-- stock 变体动作数：24（含 9 个故障注入）
-- **可达状态数：1296**
-- 可达转移边数：9216
-- 初始状态：`iface=DOWN      sleep=0 fw=LIVE run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0`
+- State variables: 11 (iface / sleep / fw / run / darm / watch / 3 properties / event queue / loss flag)
+- Stock variant actions: 24 (including 9 fault injections)
+- Reachable states: 1296
+- Reachable transition edges: 9216
+- Initial state: `iface=DOWN      sleep=0 fw=LIVE run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0`
 
-## 1. 活性检验结果（stock = 现网实现）
+## 1. Liveness check (stock = the implementation as shipped)
 
-**违反活性（永久断流）的可达状态：972 / 1296 （75.0%）**
+Reachable states that violate liveness (permanent outage): **972 / 1296 (75.0%)**
 
-也就是说：现网控制面**存在大量可达的永久断流状态**——从这些状态出发，无论系统自身如何运转（不借助人工外力），都回不到正常拉流。
+In other words, the stock control plane has a large set of reachable permanent-outage states. Once in one of them, no matter how the system runs by itself (with no human help), it never returns to normal streaming.
 
-### 1.1 最短反例（从初始状态出发需要的最少动作数）
+### 1.1 Shortest counterexamples (minimum action count from the initial state)
 
-| # | 步数 | 状态 | 机理 | 最短触发路径 |
-|---|------|------|------|--------------|
-| 1 | 1 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + RUNNING=0 | f_run_clear |
-| 2 | 1 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + SLEEP 卡死屏蔽自检 + 固件无响应 | f_sleep_stuck |
-| 3 | 2 | `iface=ABSENT    sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 接口消失 + 看门狗从未启动 + SLEEP 卡死屏蔽自检 + 固件无响应 | f_usb_out → f_sleep_stuck |
-| 4 | 2 | `iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=WAIT   ready=1 reb=0 init=1 evtq=0 lost=0` | 数据面黑洞（admin UP 但有 IP 无流） + 看门狗从未启动 | do_setup_net → f_blackhole |
-| 5 | 2 | `iface=DOWN      sleep=0 fw=DEAD run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + RUNNING=0 + detect_tmr 停摆 + 固件无响应 | f_fw_hang → detect_reinit_fail |
-| 6 | 2 | `iface=DOWN      sleep=0 fw=DEAD run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + RUNNING=0 + 固件无响应 | f_fw_hang → f_run_clear |
-| 7 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + RUNNING=0 + detect_tmr 停摆 | f_run_clear → detect_disarm |
-| 8 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=1 lost=0` | 看门狗从未启动 + RUNNING=0 | evt_push → f_run_clear |
-| 9 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=2 lost=1` | 看门狗从未启动 + RUNNING=0 | f_evt_burst → f_run_clear |
-| 10 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | 看门狗从未启动 + SLEEP 卡死屏蔽自检 + RUNNING=0 + 固件无响应 | f_sleep_stuck → f_run_clear |
-| 11 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=1 lost=0` | 看门狗从未启动 + SLEEP 卡死屏蔽自检 + 固件无响应 | evt_push → f_sleep_stuck |
-| 12 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=2 lost=1` | 看门狗从未启动 + SLEEP 卡死屏蔽自检 + 固件无响应 | f_sleep_stuck → f_evt_burst |
+| # | Steps | State | Mechanism | Shortest trigger path |
+|---|-------|-------|-----------|----------------------|
+| 1 | 1 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + RUNNING=0 | `f_run_clear` |
+| 2 | 1 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + stuck SLEEP masks self-check + firmware unresponsive | `f_sleep_stuck` |
+| 3 | 2 | `iface=ABSENT    sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Interface gone + watch never started + stuck SLEEP masks self-check + firmware unresponsive | `f_usb_out` -> `f_sleep_stuck` |
+| 4 | 2 | `iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=WAIT   ready=1 reb=0 init=1 evtq=0 lost=0` | Data black hole (admin UP, has IP, no flow) + watch never started | `do_setup_net` -> `f_blackhole` |
+| 5 | 2 | `iface=DOWN      sleep=0 fw=DEAD run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + RUNNING=0 + detect_tmr chain dead + firmware unresponsive | `f_fw_hang` -> `detect_reinit_fail` |
+| 6 | 2 | `iface=DOWN      sleep=0 fw=DEAD run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + RUNNING=0 + firmware unresponsive | `f_fw_hang` -> `f_run_clear` |
+| 7 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + RUNNING=0 + detect_tmr chain dead | `f_run_clear` -> `detect_disarm` |
+| 8 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=1 lost=0` | Watch never started + RUNNING=0 | `evt_push` -> `f_run_clear` |
+| 9 | 2 | `iface=DOWN      sleep=0 fw=LIVE run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=2 lost=1` | Watch never started + RUNNING=0 | `f_evt_burst` -> `f_run_clear` |
+| 10 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=0 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0` | Watch never started + stuck SLEEP masks self-check + RUNNING=0 + firmware unresponsive | `f_sleep_stuck` -> `f_run_clear` |
+| 11 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=1 lost=0` | Watch never started + stuck SLEEP masks self-check + firmware unresponsive | `evt_push` -> `f_sleep_stuck` |
+| 12 | 2 | `iface=DOWN      sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=0 reb=0 init=0 evtq=2 lost=1` | Watch never started + stuck SLEEP masks self-check + firmware unresponsive | `f_sleep_stuck` -> `f_evt_burst` |
 
-### 1.2 反例机理归类（按状态特征统计）
+### 1.2 Counterexample mechanisms (counted over states)
 
-| 机理 | 涉及状态数 |
-|------|-----------|
+| Mechanism | States |
+|-----------|--------|
 | RUNNING=0 | 720 |
-| 固件无响应 | 702 |
-| SLEEP 卡死屏蔽自检 | 432 |
-| detect_tmr 停摆 | 360 |
-| 看门狗已退出(oneshot) | 324 |
-| 看门狗从未启动 | 216 |
-| 接口消失 | 216 |
-| 数据面黑洞（admin UP 但有 IP 无流） | 216 |
-| 看门狗认为一切正常(admin UP) | 42 |
+| Firmware unresponsive | 702 |
+| Stuck SLEEP masks self-check | 432 |
+| detect_tmr chain dead | 360 |
+| Watch exited (oneshot) | 324 |
+| Watch never started | 216 |
+| Interface gone | 216 |
+| Data black hole (admin UP, has IP, no flow) | 216 |
+| Watch thinks all is well (admin UP) | 42 |
 
-### 1.3 典型反例详解
+### 1.3 Worked counterexamples
 
-**黑洞吸收态** — 最短 3 步：
-
-```
-  do_setup_net → watch_start → f_blackhole
-  ⇒ iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0
-```
-- 机理：数据面黑洞（admin UP 但有 IP 无流）
-- 为何回不去：
-  - `halow_net_watch.sh:23` 只查 `flags & 1`，黑洞态 admin UP → `continue`，看门狗看不见
-  - `core.c:861` detect_work 只在 `!SLEEP && fw 无响应` 时动作；此处 fw=LIVE，不触发 reinit
-  - 于是**没有任何组件会改变数据面**，黑洞被永久保持
-
-**SLEEP 屏蔽自检** — 最短 3 步：
+**Black-hole absorbing state** (3 steps):
 
 ```
-  do_setup_net → f_sleep_stuck → f_blackhole
-  ⇒ iface=BLACKHOLE sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=1 reb=0 init=1 evtq=0 lost=0
+  do_setup_net -> watch_start -> f_blackhole
+  => iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0
 ```
-- 机理：数据面黑洞（admin UP 但有 IP 无流） + 看门狗从未启动 + SLEEP 卡死屏蔽自检 + 固件无响应
-- 为何回不去：
-  - `core.c:861` `if (!SLEEP && RUNNING)`：SLEEP 置位时整段检测被跳过，只重排定时器
-  - 固件睡死 → SLEEP 永不清除 → 驱动自检永久空转
 
-**看门狗退出** — 最短 3 步：
+- Mechanism: data black hole (admin UP, has IP, no flow)
+- Why it cannot return:
+  - `halow_net_watch.sh:23` only checks `flags & 1`. The black-hole state is admin UP, so the loop `continue`s and the watch never sees it.
+  - `core.c:861` `detect_work` only acts when `!SLEEP && fw unresponsive`. Here fw=LIVE, so no reinit fires.
+  - Nothing else touches the datapath, so the black hole persists forever.
 
-```
-  do_setup_net → watch_start → f_watch_exit
-  ⇒ iface=UP_IP     sleep=0 fw=LIVE run=1 darm=1 watch=EXITED ready=1 reb=0 init=1 evtq=0 lost=0
-```
-- 机理：看门狗已退出(oneshot)
-- 为何回不去：
-  - `init.rc:57` halow_net_watch 是 `oneshot` service，退出后不再重启
-  - 此后无人再触发 rebind
-
-**定时器链断裂** — 最短 2 步：
+**SLEEP masks self-check** (3 steps):
 
 ```
-  f_fw_hang → detect_reinit_fail
-  ⇒ iface=DOWN      sleep=0 fw=DEAD run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0
+  do_setup_net -> f_sleep_stuck -> f_blackhole
+  => iface=BLACKHOLE sleep=1 fw=DEAD run=1 darm=1 watch=WAIT   ready=1 reb=0 init=1 evtq=0 lost=0
 ```
-- 机理：看门狗从未启动 + RUNNING=0 + detect_tmr 停摆 + 固件无响应
-- 为何回不去：
-  - `core.c:886` `if (RUNNING) mod_timer(...)`：RUNNING=0 → 定时器不再装填 → 自检链永久停摆
 
-### 1.4 稳态单次故障反例（headline 结论）
+- Mechanism: data black hole (admin UP, has IP, no flow) + watch never started + stuck SLEEP masks self-check + firmware unresponsive
+- Why it cannot return:
+  - `core.c:861` `if (!SLEEP && RUNNING)`: with SLEEP set the whole check is skipped and only the timer is re-armed.
+  - If the firmware sleeps to death, SLEEP never clears and the driver self-check spins forever.
 
-上面的统计混入了冷启动竞态。论文最需要的是这一类：**系统已经处于正常拉流（STREAMING），仅注入一次故障，此后系统再也无法自愈。**
+**Watch exit** (3 steps):
 
-- 可达的 STREAMING 状态数：6
-- 能造成**单次故障即永久断流**的故障类型数：**4 / 9**
+```
+  do_setup_net -> watch_start -> f_watch_exit
+  => iface=UP_IP     sleep=0 fw=LIVE run=1 darm=1 watch=EXITED ready=1 reb=0 init=1 evtq=0 lost=0
+```
 
-| 故障注入 | 注入后状态 | 机理 | 硬断流? |
-|----------|-----------|------|---------|
-| `f_blackhole` | `iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | 数据面黑洞（admin UP 但有 IP 无流） | 是（数据面已不可用） |
-| `f_run_clear` | `iface=UP_IP     sleep=0 fw=LIVE run=0 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | RUNNING=0 + 看门狗认为一切正常(admin UP) | 否（能力丧失：此刻仍在流，但已失去自愈能力） |
-| `f_sleep_stuck` | `iface=UP_IP     sleep=1 fw=DEAD run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | SLEEP 卡死屏蔽自检 + 固件无响应 + 看门狗认为一切正常(admin UP) | 是（数据面已不可用） |
-| `f_watch_exit` | `iface=UP_IP     sleep=0 fw=LIVE run=1 darm=1 watch=EXITED ready=1 reb=0 init=1 evtq=0 lost=0` | 看门狗已退出(oneshot) | 否（能力丧失：此刻仍在流，但已失去自愈能力） |
+- Mechanism: watch exited (oneshot)
+- Why it cannot return:
+  - `init.rc:57` registers `halow_net_watch` as a oneshot service; once it exits it is never restarted.
+  - Nobody triggers rebind afterwards.
 
-- **硬断流**（数据面当场不可用）：12 个 (故障,状态) 组合
-- **能力丧失**（此刻仍在拉流，但恢复能力已丢失，下次故障必断）：12 个组合
+**Timer chain break** (2 steps):
 
-> 「能力丧失」是本模型最值得强调的一类：**系统当前看起来完全正常，监控指标全绿，但它已经不再具备从任何故障中恢复的能力**。这类状态在传统可用性测量中会被完全漏掉——uptime 是 100%，实际脆弱度是 100%。
+```
+  f_fw_hang -> detect_reinit_fail
+  => iface=DOWN      sleep=0 fw=DEAD run=0 darm=0 watch=WAIT   ready=0 reb=0 init=0 evtq=0 lost=0
+```
 
-## 2. 对照：LHR 修补后的活性
+- Mechanism: watch never started + RUNNING=0 + detect_tmr chain dead + firmware unresponsive
+- Why it cannot return:
+  - `core.c:886` `if (RUNNING) mod_timer(...)`: with RUNNING=0 the timer is never re-armed and the self-check chain stops for good.
 
-- LHR 变体动作数：29（新增 5 个修补动作）
-- 可达状态数：1458
-- **违反活性的状态：0**
+### 1.4 Steady-state single-fault counterexamples (headline result)
 
-✅ **修补后活性成立**：在同样的故障注入集合下，所有可达状态都能在不借助外力（不含故障动作）的前提下回到 STREAMING。
+The statistics above mix in cold-start races. What the paper needs most is this class: the system is already streaming normally (`STREAMING`), a single fault is injected, and from then on it cannot heal itself.
 
-这条对比就是论文的方法学闭环：
-stock 有大量永久断流状态 → LHR 为 0，且该结论是**穷举证明**而非抽样测量。
+- Reachable STREAMING states: 6
+- Fault types that cause permanent outage from a single injection: **4 / 9**
 
+| Fault injection | State after | Mechanism | Hard outage? |
+|-----------------|-------------|-----------|--------------|
+| `f_blackhole` | `iface=BLACKHOLE sleep=0 fw=LIVE run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | Data black hole (admin UP, has IP, no flow) | Yes (datapath unusable at once) |
+| `f_run_clear` | `iface=UP_IP     sleep=0 fw=LIVE run=0 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | RUNNING=0 + watch thinks all is well (admin UP) | No (capability loss: still streaming, but self-healing is gone) |
+| `f_sleep_stuck` | `iface=UP_IP     sleep=1 fw=DEAD run=1 darm=1 watch=POLL   ready=1 reb=0 init=1 evtq=0 lost=0` | Stuck SLEEP masks self-check + firmware unresponsive + watch thinks all is well (admin UP) | Yes (datapath unusable at once) |
+| `f_watch_exit` | `iface=UP_IP     sleep=0 fw=LIVE run=1 darm=1 watch=EXITED ready=1 reb=0 init=1 evtq=0 lost=0` | Watch exited (oneshot) | No (capability loss: still streaming, but self-healing is gone) |
 
-## 3. 安全性检验（黑洞态）
+- **Hard outage** (datapath unusable at once): 12 (fault, state) pairs
+- **Capability loss** (still streaming, but recovery capability is gone; the next fault will kill it): 12 pairs
 
-- stock 可达黑洞状态数：216
-- 其中违反活性：216
-- 结论：黑洞态一旦进入几乎必然不可自愈，因为观测面只见 admin UP，**故障不可区分**。
+> Capability loss is the class this model is most worth emphasizing: the system looks completely normal, every monitoring light is green, yet it can no longer recover from any fault. Traditional availability measurements miss these states entirely. Uptime reads 100% while actual fragility is 100%.
 
-## 4. 对论文的产出
+## 2. Comparison: liveness after the LHR repair
 
-1. **否定结果（可证明）**：轮询 + 冷却 + 单向观测 + 丢旧事件队列这一组合，在可达状态空间中产生非空且规模可观的永久断流状态集。这是**设计模式的性质**，与泰芯/A133 无关，正面回应外部有效性质疑。
-2. **可迁移设计原则**：LHR 的 4 条修补（数据面探针 / 检测不被 SLEEP 屏蔽 / 定时器守护 / 看门狗自守护）各自对应一类活性反例，缺一不可。
-3. **实验角色转变**：真机注入实验不再是论文全部，而是对形式结论的**验证**——模型预测的反例路径，逐条在板端复现。
+- LHR variant actions: 29 (5 repair actions added)
+- Reachable states: 1458
+- Liveness violations: **0**
+
+With the repair, liveness holds: under the same fault injection set, every reachable state returns to STREAMING without outside help (fault actions excluded).
+
+This comparison closes the methodological loop for the paper. Stock has many permanent-outage states, LHR has zero, and the result is an exhaustive proof rather than sampled measurement.
+
+## 3. Safety check (black-hole states)
+
+- Reachable stock black-hole states: 216
+- Of those, liveness violations: 216
+- Conclusion: once a black-hole state is entered it is almost certainly not self-healing, because the observation plane only sees admin UP. The faults are indistinguishable.
+
+## 4. What the paper takes from this
+
+1. A provable negative result. The combination of polling, cooldown, one-way observation, and drop-oldest event queues produces a non-empty, sizable set of permanent-outage states in the reachable state space. This is a property of the design pattern and is independent of TaiXin/A133, which answers external-validity doubts head-on.
+2. Transferable design principles. The four LHR repairs (datapath probe, detect not masked by SLEEP, timer guard, self-guarding watch) each map to one liveness counterexample class, and none is redundant.
+3. The role of experiments changes. On-device injection is no longer the whole paper but a validation of the formal result: the model's counterexample paths are reproduced one by one on the board.

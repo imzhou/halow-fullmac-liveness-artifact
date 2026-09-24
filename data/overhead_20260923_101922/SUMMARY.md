@@ -1,4 +1,4 @@
-# LHR pull overhead — 20260923_101922
+# LHR pull overhead, 20260923_101922
 
 Script: `measure_lhr_overhead.sh` · N=100 · IF=hg0 · INTERVAL assumption 3 s
 

@@ -1,6 +1,6 @@
 # halow-fullmac-liveness-artifact
 
-Artifact for *Reliable Wi-Fi HaLow Video Links on Android FullMAC Stacks: Failure Characterization and Layered Recovery* (submission to Computer Communications).
+Artifact for *When Recovery Breaks Sessions: Liveness Failures across Firmware, Host, and Android in Wi-Fi HaLow FullMAC Stacks* (submission to Computer Communications).
 
 Control-plane liveness models + board experiment harness + raw logs for the TXW8301 USB FullMAC on an A133 Android 10 platform.
 
@@ -55,4 +55,4 @@ Fisher exact tests quoted in the paper: EMS 9/20 vs 20/20 -> p = 6.1e-4; E4 17/1
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Shenzhen Root Innovation Technology Co., Ltd.
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Shenzhen Root Innovation Technology Co., Ltd.

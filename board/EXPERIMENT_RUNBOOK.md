@@ -1,51 +1,51 @@
-# 板端实验跑法（不编固件）
+# Board experiment runbook (no firmware rebuild)
 
-## 环境分工（必读）
+## Who runs what (read first)
 
-| 机器 | 能力 |
-|------|------|
-| **本机 Windows** | `adb shell` 已通；跑 `scripts/windows/run_board.bat` |
-| **buildserver** | 改论文/跑模型；**无 adb**；通过 **Z: 映射**读 `board_results/` |
+| Machine | Role |
+|---------|------|
+| Local Windows | `adb shell` works; run `board/windows/run_board.bat` |
+| buildserver | Paper edits and models; no adb; reads `board_results/` through the Z: mount |
 
-不要在 buildserver 上执行 adb。详细步骤：[`windows/README.md`](windows/README.md)。
+Do not run adb on buildserver. Step-by-step detail: [windows/README.md](windows/README.md).
 
-## Windows 一键（纯 bat）
+## One-shot Windows run (pure .bat)
 
-默认套件每轮：`E4 stock` → `E4 LHR` → `EMS stock` → `EMS LHR`（`RUN_E2=0`）。
+The default suite runs E4 stock, E4 LHR, EMS stock, EMS LHR per round (`RUN_E2=0`).
 
 ```bat
-cd <Z: 上的>\iotj_C_reliability\scripts\windows
+cd <Z:>\board\windows
 run_board.bat snap
 
-REM 单摄像头：只验证 link-bounce mismatch（不支撑 Claim-2 的 N-1 放大）
+REM single camera: only validates link-bounce mismatch (does not support Claim-2's N-1 amplification)
 run_board.bat 5 172.16.0.100
 
-REM Claim-2：至少两台摄像头（N>=2）
+REM Claim-2: at least two cameras (N>=2)
 run_board.bat 5 172.16.0.100 172.16.0.101
 ```
 
-结果写入 `board_results\<时间戳>\`。详见 [`windows/README.md`](windows/README.md)。
+Results land in `board_results\<timestamp>\`. See [windows/README.md](windows/README.md).
 
-## Claim 对齐
+## Claim alignment
 
-| 实验 | 需要 | 支撑 |
-|------|------|------|
-| E4 stock | 1 AP | oneshot watch 被杀后不自愈 |
-| E4 LHR | 1 AP | pull/rebind 不依赖 oneshot watch 可恢复 |
-| EMS stock / LHR（1 peer） | 1 摄像头 | alive vs `sta_count` 偏差 + LHR reconcile |
-| EMS stock / LHR（≥2 peers） | ≥2 摄像头 | Claim-2：reinit / bounce 后 N−1 级会话偏差 |
+| Experiment | Needs | Supports |
+|------------|-------|----------|
+| E4 stock | 1 AP | No self-heal after the oneshot watch is killed |
+| E4 LHR | 1 AP | Pull/rebind recovers without the oneshot watch |
+| EMS stock / LHR (1 peer) | 1 camera | `alive` vs `sta_count` mismatch plus LHR reconcile |
+| EMS stock / LHR (>=2 peers) | >=2 cameras | Claim-2: N-1 session mismatch after reinit / bounce |
 
-`run_suite.sh` 在 `npeers<2` 时会打 WARN，但仍跑完单 peer 套件。
+`run_suite.sh` prints a WARN when `npeers<2` but still runs the single-peer suite.
 
-## buildserver 汇总
+## Aggregating on buildserver
 
 ```bash
-cd /home/zhoujifeng/code/SDK/paper/halow/iotj_C_reliability
-python3 scripts/summarize_board_results.py board_results
+cd <repo root>
+python3 analysis/summarize_board_results.py data
 ```
 
-## 判定
+## Reading the verdicts
 
-- `self_heal=0` E4 stock / EMS stock → 支持模型
-- `self_heal=1` E4 LHR / EMS LHR → 支持修补
-- `status=SKIP` E2 → 允许（不刷固件；sleep 可挂 FWCTRL）
+- `self_heal=0` on E4 stock / EMS stock supports the model.
+- `self_heal=1` on E4 LHR / EMS LHR supports the repair.
+- `status=SKIP` on E2 is allowed (no firmware flash; sleep may hang FWCTRL).

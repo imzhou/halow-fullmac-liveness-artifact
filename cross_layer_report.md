@@ -1,54 +1,54 @@
-# 跨层控制面活性检验报告（固件 + 主机 + USB 总线）
+# Cross-layer control-plane liveness report (firmware + host + USB bus)
 
-模型来源：泰芯 TXW8301 FMAC SDK `TXW8301_FMAC-v2.4.1.5-40938`
+Model source: TaiXin TXW8301 FMAC SDK `TXW8301_FMAC-v2.4.1.5-40938`
 
-| 状态变量 | 含义 | 代码依据 |
-|---|---|---|
-| `ready` | 固件→主机上行通路可用 | `usb_bus.c:32,79,86,103,128` |
-| `pending` | 固件侧待重试的入向数据 | `usb_bus.c:31,138` |
-| `pd_age` | pending 已超时（>100 jiffies） | `usb_bus.c:46` |
-| `fwq` | 固件事件队列占用（满档=2，实际 32） | `main.c:419` |
-| `hq` | 主机事件队列占用（满档=2，实际 16） | 驱动 `evt_list` |
-| `dr` | 固件有待补报的丢弃通知（修补引入） | — |
-| `aware` | 主机已感知异常，可触发恢复 | — |
-| `link` | 视频会话真实连通 | — |
+| State variable | Meaning | Code evidence |
+|----------------|---------|---------------|
+| `ready` | Firmware to host uplink path usable | `usb_bus.c:32,79,86,103,128` |
+| `pending` | Inbound data waiting for retry on the firmware side | `usb_bus.c:31,138` |
+| `pd_age` | pending has aged out (>100 jiffies) | `usb_bus.c:46` |
+| `fwq` | Firmware event queue occupancy (full level = 2, actual 32) | `main.c:419` |
+| `hq` | Host event queue occupancy (full level = 2, actual 16) | driver `evt_list` |
+| `dr` | Firmware has drop notifications owed to the host (introduced by the repair) | (none) |
+| `aware` | Host has noticed the fault and can trigger recovery | (none) |
+| `link` | Video session genuinely connected | (none) |
 
-活性目标 `GOOD(link=1 ∧ fwq=0 ∧ hq=0 ∧ pending=0)`：会话连通且两侧队列无积压。
+Liveness goal `GOOD(link=1 & fwq=0 & hq=0 & pending=0)`: session connected and both queues drained. (The released script labels this `GOOD`; the paper calls it `STREAMING`.)
 
-**检验口径**：对手环境 + 公平系统。ENV 动作由环境驱动、不保证发生，因此不作为逃逸路径；SYS / LHR 动作由系统驱动、公平调度下必然执行，可作逃逸路径。若存在「系统无论如何都逃不出去」的状态集合（陷阱集），判定活性违反。这比常见的「存在一条路径能恢复」（∃◇）严格得多——后者过松，撑不起「永久断流」的论断。
+Check semantics: adversarial environment, fair system. ENV actions are driven by the environment and not guaranteed to happen, so they do not count as escape paths; SYS/LHR actions are system-driven and, under fair scheduling, do run, so they do count. A state set the system can never escape (a trap set) then decides the verdict. This is much stricter than "some path recovers" (exists-eventually), which is too weak to support a "permanent outage" claim.
 
-## 1. 活性违反规模
+## 1. Scale of liveness violations
 
-| 变体 | 可达状态 | 陷阱集 | 违反占比 | 判定 |
-|---|---|---|---|---|
-| stock（现网） | 213 | **9** | 4.2% | **违反** |
-| 全修补（P+R+V1+V2） | 426 | **0** | 0.0% | 成立 |
+| Variant | Reachable states | Trap set | Share | Verdict |
+|---------|------------------|----------|-------|---------|
+| stock (as shipped) | 213 | 9 | 4.2% | Violates |
+| Full repair (P+R+V1+V2) | 426 | 0 | 0.0% | Holds |
 
-## 2. stock 反例（最短触发路径）
+## 2. Stock counterexamples (shortest trigger paths)
 
-| # | 状态 | 深度 | 触发路径 |
-|---|---|---|---|
-| 1 | `ready=0 pending=0 pd_age=0 fwq=1 hq=0 dr=0 aware=0 link=0` | 2 | INIT → usb_tx_fail → session_break |
-| 2 | `ready=0 pending=0 pd_age=0 fwq=0 hq=0 dr=0 aware=0 link=0` | 3 | INIT → usb_tx_fail → session_break → fw_flush_drop |
-| 3 | `ready=0 pending=0 pd_age=0 fwq=2 hq=0 dr=0 aware=0 link=0` | 3 | INIT → fw_evt → usb_tx_fail → session_break |
-| 4 | `ready=0 pending=1 pd_age=0 fwq=1 hq=0 dr=0 aware=0 link=0` | 3 | INIT → usb_tx_fail → rx_enomem → session_break |
-| 5 | `ready=0 pending=1 pd_age=0 fwq=0 hq=0 dr=0 aware=0 link=0` | 4 | INIT → usb_tx_fail → rx_enomem → session_break → fw_flush_drop |
-| 6 | `ready=0 pending=1 pd_age=0 fwq=2 hq=0 dr=0 aware=0 link=0` | 4 | INIT → fw_evt → usb_tx_fail → rx_enomem → session_break |
-| 7 | `ready=0 pending=1 pd_age=1 fwq=1 hq=0 dr=0 aware=0 link=0` | 4 | INIT → usb_tx_fail → rx_enomem → pd_poll_fail → session_break |
-| 8 | `ready=0 pending=1 pd_age=1 fwq=0 hq=0 dr=0 aware=0 link=0` | 5 | INIT → usb_tx_fail → rx_enomem → pd_poll_fail → session_break → fw_flush_drop |
-| 9 | `ready=0 pending=1 pd_age=1 fwq=2 hq=0 dr=0 aware=0 link=0` | 5 | INIT → fw_evt → usb_tx_fail → rx_enomem → pd_poll_fail → session_break |
+| # | State | Depth | Trigger path |
+|---|-------|-------|--------------|
+| 1 | `ready=0 pending=0 pd_age=0 fwq=1 hq=0 dr=0 aware=0 link=0` | 2 | INIT -> `usb_tx_fail` -> `session_break` |
+| 2 | `ready=0 pending=0 pd_age=0 fwq=0 hq=0 dr=0 aware=0 link=0` | 3 | INIT -> `usb_tx_fail` -> `session_break` -> `fw_flush_drop` |
+| 3 | `ready=0 pending=0 pd_age=0 fwq=2 hq=0 dr=0 aware=0 link=0` | 3 | INIT -> `fw_evt` -> `usb_tx_fail` -> `session_break` |
+| 4 | `ready=0 pending=1 pd_age=0 fwq=1 hq=0 dr=0 aware=0 link=0` | 3 | INIT -> `usb_tx_fail` -> `rx_enomem` -> `session_break` |
+| 5 | `ready=0 pending=1 pd_age=0 fwq=0 hq=0 dr=0 aware=0 link=0` | 4 | INIT -> `usb_tx_fail` -> `rx_enomem` -> `session_break` -> `fw_flush_drop` |
+| 6 | `ready=0 pending=1 pd_age=0 fwq=2 hq=0 dr=0 aware=0 link=0` | 4 | INIT -> `fw_evt` -> `usb_tx_fail` -> `rx_enomem` -> `session_break` |
+| 7 | `ready=0 pending=1 pd_age=1 fwq=1 hq=0 dr=0 aware=0 link=0` | 4 | INIT -> `usb_tx_fail` -> `rx_enomem` -> `pd_poll_fail` -> `session_break` |
+| 8 | `ready=0 pending=1 pd_age=1 fwq=0 hq=0 dr=0 aware=0 link=0` | 5 | INIT -> `usb_tx_fail` -> `rx_enomem` -> `pd_poll_fail` -> `session_break` -> `fw_flush_drop` |
+| 9 | `ready=0 pending=1 pd_age=1 fwq=2 hq=0 dr=0 aware=0 link=0` | 5 | INIT -> `fw_evt` -> `usb_tx_fail` -> `rx_enomem` -> `pd_poll_fail` -> `session_break` |
 
-**全部 9 个反例都在陷阱集内**：它们不只是「存在一条坏路径」，而是构成封闭区域——一旦落入，此后无论环境如何演化、系统如何调度，都无法自行回到正常。这是最强意义的活性违反。
+All 9 counterexamples sit in the trap set. They are not just "one bad path exists"; they form a closed region. Once inside, no environment evolution and no scheduling can bring the system back. This is liveness violation in the strongest sense.
 
-## 3. 核心死锁：跨层循环依赖
+## 3. The core deadlock: a cross-layer dependency cycle
 
-死锁状态：
+Deadlock state:
 
 ```
   ready=0 pending=0 pd_age=0 fwq=0 hq=0 dr=0 aware=0 link=0
 ```
 
-最短触发路径：
+Shortest trigger path:
 
 ```
   INIT
@@ -57,99 +57,96 @@
   fw_flush_drop
 ```
 
-**机理**——四个条件互为前提，构成闭环：
+Mechanism: four conditions presuppose each other and close a loop.
 
-1. `ready` 置 1 的唯一途径是主机下发数据触发 `USB_EP_RX_IRQ`（`usb_bus.c:128`）；
-2. 主机持续下发的前提是会话健康（`link=1`，才有 TCP ACK / RTSP 保活）；
-3. 会话恢复的前提是主机感知故障，而感知依赖固件上行事件抵达 `hq`；
-4. 事件抵达 `hq` 的前提是 `ready=1`。
+1. The only way `ready` returns to 1 is host-side downlink data triggering `USB_EP_RX_IRQ` (`usb_bus.c:128`).
+2. Host downlink keeps flowing only while the session is healthy (`link=1` gives TCP ACKs / RTSP keepalives).
+3. Session recovery needs the host to notice the fault, and noticing depends on firmware uplink events reaching `hq`.
+4. Events reach `hq` only when `ready=1`.
 
-`ready=0` 与 `link=0` 一旦同时成立，四条互为前提、全部落空。
+Once `ready=0` and `link=0` hold at the same time, all four prerequisites fail together.
 
-关键：两侧实现**各自都是合理的**——固件写失败后标记不可用、收到主机数据才确认可用；主机在没有事件时认为链路正常、不下发。故障出在**组合**，不在任何一侧。
+Worth stressing: each side's implementation is reasonable on its own. The firmware marks the path unusable after a failed write and only confirms it usable when host data arrives; the host treats the link as fine when no events arrive and sends nothing. The failure is in the composition, not in either side.
 
-## 4. 无痕丢弃：为什么运维侧看不见
+## 4. Drop without a trace: why operations cannot see it
 
-| 丢弃点 | 代码 | 痕迹 |
-|---|---|---|
-| 上行 `!ready` 丢弃 | `usb_bus.c:79-82` | 仅 `txerr++`，固件内部计数，主机不可见 |
-| 上行写失败清位 | `usb_bus.c:86,103` | 无事件、无中断 |
-| 入向超时丢弃 | `usb_bus.c:46,53-56` | 无计数器，`rxcount=0` 直接重新 arm |
-| 主机队列满丢弃 | 驱动 `evt_list` 满 | 无累计计数器，`/proc/hgicf/status` 只显示当前长度 |
+| Drop point | Code | Trace |
+|------------|------|-------|
+| Uplink drop on `!ready` | `usb_bus.c:79-82` | Only `txerr++`, firmware-internal, invisible to the host |
+| Write failure clears the ready bit | `usb_bus.c:86,103` | No event, no interrupt |
+| Inbound timeout drop | `usb_bus.c:46,53-56` | No counter; `rxcount=0` and re-arm |
+| Host queue full drop | driver `evt_list` full | No cumulative counter; `/proc/hgicf/status` shows only the current length |
 
-三处一致：**丢弃后均无重传**。固件 `HGIC_EXCEPTION_TX_BLOCKED / TXDELAY_TOOLONG / WIFI_BUFFER_USED_OVERTOP / HEAP_USED_OVERTOP / CPU_USED_OVERTOP`（`hgic.h:287-295`）说明固件自己知道这些故障态，`HGIC_EVENT_EXCEPTION_INFO = 27`（`hgic.h:276`）是现成通道——但上报同样要走 `ready` 这条上行通路。**通道存在，通路不通。**
+All four agree on one thing: no retransmission after a drop. The firmware does know these failure states: `HGIC_EXCEPTION_TX_BLOCKED` / `TXDELAY_TOOLONG` / `WIFI_BUFFER_USED_OVERTOP` / `HEAP_USED_OVERTOP` / `CPU_USED_OVERTOP` (`hgic.h:287-295`), and `HGIC_EVENT_EXCEPTION_INFO = 27` (`hgic.h:276`) is a ready-made channel. Reporting, however, also travels over the same `ready` uplink. The channel exists; the path does not.
 
-## 5. 现网已有心跳，但方向相反
+## 5. A heartbeat already exists, pointing the wrong way
 
-`usb_bus.c:196` 初始化时调用 `usb_device_wifi_auto_tx_null_pkt_enable()`，使能的是 `USB_WIFI_TX_EP`（设备→主机方向）的自动空包。打破死锁需要的是**主机→固件**方向的下发（`USB_EP_RX_IRQ`）。**同层已有心跳，方向相反，故不解决该死锁。**
+`usb_bus.c:196` calls `usb_device_wifi_auto_tx_null_pkt_enable()` at init, which enables automatic null packets on `USB_WIFI_TX_EP` (device to host). Breaking the deadlock needs downlink from the host to the firmware (`USB_EP_RX_IRQ`). The same layer already has a heartbeat, in the opposite direction, so it does not cover this deadlock.
 
-## 6. 修补逐条 ablation
+## 6. Repair ablation, item by item
 
-| 配置 | 可达状态 | 陷阱集 | 判定 |
-|---|---|---|---|
-| stock（无修补） | 213 | 9 | **违反（9）** |
-| 仅 P：周期性下行心跳（只恢复 `ready`） | 216 | 6 | **违反（6）** |
-| 仅 R：周期性主动查询对账 | 213 | 0 | 成立 |
-| 仅 V1：上行丢弃记待补报 | 423 | 15 | **违反（15）** |
-| 仅 V2：入向丢弃记待补报 | 426 | 18 | **违反（18）** |
-| V1+V2：只做可见化，不通路 | 423 | 15 | **违反（15）** |
-| P+V1+V2：心跳 + 可见化，不查询 | 426 | 0 | 成立 |
-| P+R+V1+V2（全量） | 426 | 0 | 成立 |
+| Configuration | Reachable states | Trap set | Verdict |
+|---------------|------------------|----------|---------|
+| stock (no repair) | 213 | 9 | Violates (9) |
+| P only: periodic downlink heartbeat (recovers `ready` only) | 216 | 6 | Violates (6) |
+| R only: periodic active query reconciliation | 213 | 0 | Holds |
+| V1 only: uplink drops recorded for later report | 423 | 15 | Violates (15) |
+| V2 only: inbound drops recorded for later report | 426 | 18 | Violates (18) |
+| V1+V2: visibility only, no path repair | 423 | 15 | Violates (15) |
+| P+V1+V2: heartbeat plus visibility, no query | 426 | 0 | Holds |
+| P+R+V1+V2 (full) | 426 | 0 | Holds |
 
-**读出三个事实**：
+Three facts fall out:
 
-1. **纯心跳（P）不够**（残留 6 个陷阱状态）。它恢复了上行通路，但**已被丢弃的事件不会重发**——`usb_bus.c:53-56` 丢弃后直接 `rxcount=0` 重新 arm，固件侧无任何重传机制。通路通了，信息没了。
+1. A pure heartbeat (P) is not enough (6 trap states remain). It recovers the uplink path, but already-dropped events are not resent: `usb_bus.c:53-56` drops, sets `rxcount=0`, and re-arms, with no retransmission anywhere in the firmware. The path works again; the information is gone.
+2. Visibility alone (V1/V2) is not enough (V1 leaves 15, V1+V2 leaves 15). Making drops visible means sending a notification up, and that notification travels over the broken path. Visibility parasitizes the very thing it is supposed to fix.
+3. Active query reconciliation (R) alone removes every violation. One downlink does two jobs: it recovers `ready` and actively pulls back the true state, without relying on the firmware reporting first.
 
-2. **只做可见化（V1/V2）不够**（V1 残留 15，V1V2 残留 15）。「让丢弃可见」需要把通知送上去，而送上去走的正是那条不通的通路——可见化寄生在它要修复的对象上。
+Two transferable design principles:
 
-3. **主动查询对账（R）单独即可消除全部违反**。它一次下发同时完成两件事：恢复 `ready`，并**主动取回**真实状态，完全不依赖固件先上报。
+> **Principle 1 (path decoupling):** the liveness of a control-plane recovery path must not depend on the health of the object being recovered. Here the recovery of `ready` depends on host downlink, and continued host downlink depends on session health. The recovery action parasitizes its target, which necessarily produces liveness counterexamples.
 
-由此提炼两条可迁移的设计原则：
+> **Principle 2 (pull over push):** on a channel that drops without a trace and never retransmits, push-style state sync necessarily loses information. Recovery must use pull-style reconciliation.
 
-> **原则一（通路解耦）**：控制面恢复通路的活性，不得依赖被恢复对象自身的健康状态。本例中 `ready` 的恢复依赖主机下发，而主机下发的持续又依赖会话健康——恢复动作寄生在被恢复对象上，必然产生活性反例。
+Principle 1 is isomorphic to out-of-band management in distributed systems: if the management plane shares a path with the plane it manages, it dies with that path.
 
-> **原则二（pull 优于 push）**：在存在无痕丢弃且无重传的通道上，push 式状态同步必然丢失信息；恢复必须基于 pull 式对账。
+The query ability R needs already exists and is unused: `iwpriv sta_count` / `sta_list` read the STA table directly, but `halow_net_watch.sh` only looks at bit 0 of the netdev flags and has never called it.
 
-原则一与分布式系统的带外管理（out-of-band management）同构：管理面若与被管面共享同一条通路，管理面会在该通路故障时一并失效。
+## 6.5 Complete characterization of minimal repair sets (verified in the model)
 
-而 R 所需的查询能力**现网已经具备且未被使用**：`iwpriv sta_count / sta_list` 可直接查询 STA 表，但 `halow_net_watch.sh` 只看 netdev flags 的 bit 0，从未调用过它。
+The 8 configurations above hint at a stronger rule. Stated as a proposition and checked against all 16 subsets:
 
-## 6.5 最小修补集合的完备刻画（模型内验证）
+> **Proposition:** a repair subset S removes the deadlock if and only if S provides path liveness (`P in S` or `R in S`) **and** S provides state retrieval (`R in S` or `V1 in S`).
 
-上面 8 个配置暗示了一条更强的规律。把它写成命题并枚举全部 16 个子集验证：
+The right conjunct excludes V2 on purpose: the deadlock loop runs through the uplink drop path (`fw_flush_drop`), and only V1 covers it. V2 covers the inbound timeout drop (`pd_drop`), which is not part of this loop. A repair must cover the drop that causes the deadlock, not any drop in general.
 
-> **命题**：修补子集 S 消除死锁 ⟺ S 提供「通路活性」（`P ∈ S ∨ R ∈ S`）**且** S 提供「状态取回」（`R ∈ S ∨ V1 ∈ S`）。
+| Subset S | Path liveness | State retrieval | Trap set | Actually effective | Proposition predicts | Match |
+|----------|---------------|-----------------|----------|--------------------|-----------------------|-------|
+| `(none)` | no | no | 9 | no | no | yes |
+| `P` | yes | no | 6 | no | no | yes |
+| `R` | yes | yes | 0 | yes | yes | yes |
+| `V1` | no | yes | 15 | no | no | yes |
+| `V2` | no | no | 18 | no | no | yes |
+| `PR` | yes | yes | 0 | yes | yes | yes |
+| `PV1` | yes | yes | 0 | yes | yes | yes |
+| `PV2` | yes | no | 2 | no | no | yes |
+| `RV1` | yes | yes | 0 | yes | yes | yes |
+| `RV2` | yes | yes | 0 | yes | yes | yes |
+| `V1V2` | no | yes | 15 | no | no | yes |
+| `PRV1` | yes | yes | 0 | yes | yes | yes |
+| `PRV2` | yes | yes | 0 | yes | yes | yes |
+| `PV1V2` | yes | yes | 0 | yes | yes | yes |
+| `RV1V2` | yes | yes | 0 | yes | yes | yes |
+| `PRV1V2` | yes | yes | 0 | yes | yes | yes |
 
-注意右支不含 V2：死锁环走的是**上行**丢弃路径（`fw_flush_drop`），只有 V1 覆盖它；V2 覆盖的是**入向**超时丢弃（`pd_drop`），那条路径不参与本环。修补必须覆盖造成死锁的那一条，而非任意一条可见化。
+All 16 rows match, so the proposition holds inside the model. The minimal solutions are `['R', 'PV1']`, one or two actions in size.
 
-| 子集 S | 通路活性 | 状态取回 | 陷阱集 | 实际有效 | 命题预测 | 一致 |
-|---|---|---|---|---|---|---|
-| `(none)` | 无 | 无 | 9 | 否 | 否 | ✓ |
-| `P` | 有 | 无 | 6 | 否 | 否 | ✓ |
-| `R` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `V1` | 无 | 有 | 15 | 否 | 否 | ✓ |
-| `V2` | 无 | 无 | 18 | 否 | 否 | ✓ |
-| `PR` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `PV1` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `PV2` | 有 | 无 | 2 | 否 | 否 | ✓ |
-| `RV1` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `RV2` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `V1V2` | 无 | 有 | 15 | 否 | 否 | ✓ |
-| `PRV1` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `PRV2` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `PV1V2` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `RV1V2` | 有 | 有 | 0 | 是 | 是 | ✓ |
-| `PRV1V2` | 有 | 有 | 0 | 是 | 是 | ✓ |
+This proposition is stronger than "every repair is necessary". Instead of listing one working fix, it characterizes the full set of working fixes with both necessary and sufficient conditions. A reviewer cannot wave it away with "maybe some other repair works too", because all 16 combinations are exhausted.
 
-**16/16 全部一致**，命题在模型内成立。极小解为 `['R', 'PV1']`，规模仅 1–2 个动作。
+## 7. Conclusions
 
-这条命题比「缺一不可」更强：它不只是列出一个可行解，而是**完整刻画了可行解集合**，同时给出必要条件与充分条件——审稿人无法用「换个修补也许也行」来质疑，因为所有 16 种组合都已穷举。
-
-## 7. 结论
-
-1. **跨层死锁可达，且在强活性口径下成立**：`usb_tx_fail → session_break → fw_flush_drop` 即可进入陷阱集，此后无论环境如何演化都无法自行恢复。
-2. **机理是组合性的**：两侧实现各自合理，死锁来自「上行恢复依赖下行」与「下行持续依赖会话健康」构成的闭环，不在任何一侧。
-3. **可迁移**：该结构不依赖泰芯或 A133 的任何私有细节。任何 FullMAC 模组 + 轮询式主机栈的同构组合都会重现。
-4. **修补极小且必要**：周期性主动查询（一次 USB 下发 + 取回状态）即可消除全部违反；纯心跳与纯可见化均不够，现网已有的空包机制（`usb_bus.c:196`）因方向相反未能覆盖。
-5. **诊断信息本已存在**：固件 `hgic.h:287-295` 定义了 8 类异常、`hgic.h:276` 提供了上报通道，可观测性缺口不是「信息不存在」，而是「信息已生成但通路上不去」。
-
+1. The cross-layer deadlock is reachable and holds under the strong liveness semantics: `usb_tx_fail` -> `session_break` -> `fw_flush_drop` enters the trap set, and no environment evolution brings it back.
+2. The mechanism is compositional. Both implementations are reasonable alone; the deadlock comes from the loop "uplink recovery depends on downlink" and "continued downlink depends on session health".
+3. It transfers. The structure depends on no private detail of TaiXin or A133. Any FullMAC module with a polling host stack reproduces it.
+4. The repair is minimal and necessary: periodic active query (one USB downlink plus state retrieval) removes every violation. Pure heartbeat and pure visibility are both insufficient, and the existing null-packet mechanism (`usb_bus.c:196`) points the wrong way to help.
+5. The diagnostic information already existed. `hgic.h:287-295` defines 8 exception classes and `hgic.h:276` provides the reporting channel. The observability gap is not that the information does not exist; it is that the information is generated but cannot travel the path.
