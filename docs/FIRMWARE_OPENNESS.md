@@ -1,6 +1,6 @@
 # TaiXin SDK openness assessment (what the paper can and cannot claim)
 
-Path: `/home/zhoujifeng/code/wifi_halow/TX_AH_SDK_2.4/TXW8301_FMAC-v2.4.1.5-40938`
+SDK under evaluation: TaiXin `TXW8301_FMAC-v2.4.1.5-40938` (read-only vendor SDK; local checkout paths omitted)
 
 ## 1. Closed source (don't claim "we changed the MAC algorithm")
 
