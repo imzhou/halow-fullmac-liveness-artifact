@@ -1,0 +1,14 @@
+t,mode,alive,sta_count,mismatch,action
+1789727562,lhr,0,1,0,baseline
+1789727568,lhr,0,1,1,reconcile_rebind
+1789727572,lhr,0,1,1,reconcile_rebind
+1789727576,lhr,0,1,1,reconcile_rebind
+1789727579,lhr,0,1,1,reconcile_rebind
+1789727583,lhr,0,1,1,reconcile_rebind
+1789727587,lhr,0,1,1,reconcile_rebind
+1789727591,lhr,0,1,1,reconcile_rebind
+1789727595,lhr,0,1,1,reconcile_rebind
+1789727598,lhr,0,1,1,reconcile_rebind
+1789727602,lhr,0,1,1,reconcile_rebind
+1789727606,lhr,0,1,1,reconcile_rebind
+1789727610,lhr,0,1,1,reconcile_rebind

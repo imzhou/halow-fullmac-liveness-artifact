@@ -1,0 +1,21 @@
+suite out=/data/local/tmp/halow_exp/results_20260918_182459 peers=172.16.0.100 N=5
+==== round 1/5 E4 ====
+==== round 1/5 EMS stock ====
+==== round 1/5 EMS lhr ====
+==== round 1/5 E2 ====
+==== round 2/5 E4 ====
+==== round 2/5 EMS stock ====
+==== round 2/5 EMS lhr ====
+==== round 2/5 E2 ====
+==== round 3/5 E4 ====
+==== round 3/5 EMS stock ====
+==== round 3/5 EMS lhr ====
+==== round 3/5 E2 ====
+==== round 4/5 E4 ====
+==== round 4/5 EMS stock ====
+==== round 4/5 EMS lhr ====
+==== round 4/5 E2 ====
+==== round 5/5 E4 ====
+==== round 5/5 EMS stock ====
+==== round 5/5 EMS lhr ====
+==== round 5/5 E2 ====

@@ -1,0 +1,30 @@
+[20:56:41] === EMS mode=stock peers=172.16.0.100 ===
+[20:56:41] baseline alive=0 sta_count=0
+[20:56:41] inject: ip link down/up hg0 (provokes control-plane churn)
+[20:56:47] t=0s alive=0 sta_count=0 mis=0
+[20:56:52] t=6s alive=0 sta_count=0 mis=0
+[20:56:57] t=11s alive=0 sta_count=0 mis=0
+[20:57:02] t=16s alive=0 sta_count=0 mis=0
+[20:57:07] t=21s alive=0 sta_count=0 mis=0
+[20:57:13] t=26s alive=0 sta_count=0 mis=0
+[20:57:18] t=32s alive=0 sta_count=0 mis=0
+[20:57:23] t=37s alive=0 sta_count=0 mis=0
+[20:57:28] t=42s alive=0 sta_count=0 mis=0
+[20:57:33] t=47s alive=0 sta_count=0 mis=0
+[20:57:38] t=52s alive=0 sta_count=0 mis=0
+[20:57:44] t=58s alive=0 sta_count=0 mis=0
+[20:57:49] t=63s alive=0 sta_count=0 mis=0
+[20:57:54] t=68s alive=0 sta_count=0 mis=0
+[20:57:59] t=73s alive=0 sta_count=0 mis=0
+[20:58:04] t=78s alive=0 sta_count=0 mis=0
+[20:58:10] t=83s alive=0 sta_count=0 mis=0
+[20:58:15] t=89s alive=0 sta_count=0 mis=0
+[20:58:20] t=94s alive=0 sta_count=0 mis=0
+[20:58:25] t=99s alive=0 sta_count=0 mis=0
+[20:58:30] t=104s alive=0 sta_count=0 mis=0
+[20:58:36] t=110s alive=0 sta_count=0 mis=0
+[20:58:41] t=115s alive=0 sta_count=0 mis=0
+[20:58:46] t=120s alive=0 sta_count=0 mis=0
+[20:58:51] t=125s alive=0 sta_count=0 mis=0
+[20:58:56] t=130s alive=0 sta_count=0 mis=0
+[20:59:02] t=136s alive=0 sta_count=0 mis=0

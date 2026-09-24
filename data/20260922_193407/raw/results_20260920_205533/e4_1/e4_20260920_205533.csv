@@ -1,0 +1,5 @@
+t,phase,flags,watch_alive,self_heal_note
+1789908933,baseline,0x1003,1,
+1789908934,after_kill,0x1003,1,
+1789908935,injected,0x1002,1,
+1789908996,verdict,0x1002,0,self_heal=0

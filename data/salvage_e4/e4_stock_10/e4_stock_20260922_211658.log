@@ -1,0 +1,17 @@
+=== E4 MODE=stock TO=25 ===
+phase=baseline flags=0x1003 watch=1
+kill_watch: start
+kill_watch: done
+phase=after_kill flags=0x1003 watch=0
+phase=injected flags=0x1002 watch=0
+wait 1/25s up=0
+wait 4/25s up=0
+wait 8/25s up=0
+wait 11/25s up=0
+wait 15/25s up=0
+wait 19/25s up=0
+wait 22/25s up=0
+wait 26/25s up=0
+SELF_HEAL=0 timeout=25s
+=== E4 done self_heal=0 mode=stock ===
+post-test restore

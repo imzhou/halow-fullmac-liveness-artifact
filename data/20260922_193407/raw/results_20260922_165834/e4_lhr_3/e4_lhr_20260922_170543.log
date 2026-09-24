@@ -1,0 +1,9 @@
+=== E4 MODE=lhr TO=25 ===
+phase=baseline flags=0x1003 watch=1
+phase=after_kill flags=0x1003 watch=0
+phase=injected flags=0x1002 watch=0
+LHR act: rebind + link up (watch still dead)
+wait 8/25s up=1
+SELF_HEAL=1 at 8s
+=== E4 done self_heal=1 mode=lhr ===
+post-test restore

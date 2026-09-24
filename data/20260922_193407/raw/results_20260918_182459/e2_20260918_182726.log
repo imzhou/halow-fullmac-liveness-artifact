@@ -1,0 +1,15 @@
+=== E2 sleep type=1 ms=15000 ===
+before: RESP:1
+9
+set sleep RESP: RESP:0
+
+t=0s up=1 ping=0
+t=3s up=1 ping=0
+t=7s up=1 ping=0
+t=10s up=1 ping=0
+t=13s up=1 ping=0
+t=16s up=1 ping=0
+t=19s up=1 ping=0
+t=22s up=1 ping=0
+t=25s up=1 ping=0
+=== E2 done status=OK self_heal=0 blackhole_observed=1 ===

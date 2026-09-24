@@ -1,0 +1,17 @@
+=== E4 start TO=25 ===
+phase=baseline flags=0x1002 watch=1
+phase=after_kill flags=0x1002 watch=0
+phase=injected flags=0x1002 watch=0
+wait 7/25s up=0
+wait 9/25s up=0
+wait 11/25s up=0
+wait 14/25s up=0
+wait 16/25s up=0
+wait 18/25s up=0
+wait 20/25s up=0
+wait 22/25s up=0
+wait 24/25s up=0
+wait 26/25s up=0
+SELF_HEAL=0 timeout=25s
+=== E4 done self_heal=0 ===
+post-test restore hg0 up + watch

@@ -1,0 +1,15 @@
+t,mode,alive,sta_count,mismatch,action
+1790081974,lhr,2,2,0,baseline
+1790081982,lhr,0,1,1,reconcile_rebind
+1790081985,lhr,2,2,0,none
+1790081988,lhr,2,2,0,none
+1790081991,lhr,2,2,0,none
+1790081995,lhr,2,2,0,none
+1790081998,lhr,2,2,0,none
+1790082001,lhr,2,2,0,none
+1790082004,lhr,2,2,0,none
+1790082008,lhr,2,2,0,none
+1790082011,lhr,2,2,0,none
+1790082014,lhr,2,2,0,none
+1790082017,lhr,2,2,0,none
+1790082021,lhr,2,2,0,none

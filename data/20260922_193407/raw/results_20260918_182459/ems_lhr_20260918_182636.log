@@ -1,0 +1,20 @@
+=== EMS mode=lhr peers=172.16.0.100 ===
+baseline alive=0 sta_count=1
+inject: ip link down/up hg0 (provokes control-plane churn)
+t=0s alive=0 sta_count=0 mis=0
+t=3s alive=0 sta_count=0 mis=0
+LHR reconcile: alive=0 sta_count=1 → rebind_net=1
+t=6s alive=0 sta_count=1 mis=1
+t=10s alive=1 sta_count=1 mis=0
+t=13s alive=1 sta_count=1 mis=0
+t=16s alive=1 sta_count=1 mis=0
+t=19s alive=1 sta_count=1 mis=0
+t=22s alive=1 sta_count=1 mis=0
+t=26s alive=1 sta_count=1 mis=0
+t=29s alive=1 sta_count=1 mis=0
+t=32s alive=1 sta_count=1 mis=0
+t=35s alive=1 sta_count=1 mis=0
+t=39s alive=1 sta_count=1 mis=0
+t=42s alive=1 sta_count=1 mis=0
+self_heal=1 mismatch_final=0 alive=1 sta_count=1 mode=lhr
+=== EMS done ===

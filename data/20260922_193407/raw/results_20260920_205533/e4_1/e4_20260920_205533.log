@@ -1,0 +1,6 @@
+[20:55:33] === E4 start ===
+[20:55:33] phase=baseline flags=0x1003 watch=1
+[20:55:34] phase=after_kill flags=0x1003 watch=1
+[20:55:35] phase=injected flags=0x1002 watch=1
+[20:56:36] SELF_HEAL=0 timeout=60s (matches model: oneshot)
+[20:56:36] === E4 done self_heal=0 log=/data/local/tmp/halow_exp/results_20260920_205533/e4_1/e4_20260920_205533.log ===

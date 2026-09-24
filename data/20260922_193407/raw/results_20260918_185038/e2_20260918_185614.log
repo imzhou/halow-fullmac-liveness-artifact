@@ -1,0 +1,19 @@
+=== E2 sleep type=1 ms=15000 ===
+before: RESP:2
+-1
+set sleep RESP: RESP:0
+
+t=0s up=0 ping=0
+t=2s up=0 ping=0
+t=5s up=0 ping=0
+t=7s up=0 ping=0
+t=9s up=0 ping=0
+t=11s up=0 ping=0
+t=13s up=0 ping=0
+t=15s up=0 ping=0
+t=17s up=0 ping=0
+t=19s up=0 ping=0
+t=21s up=0 ping=0
+t=24s up=0 ping=0
+t=26s up=0 ping=0
+=== E2 done status=INCONCLUSIVE blackhole_observed=0 ===

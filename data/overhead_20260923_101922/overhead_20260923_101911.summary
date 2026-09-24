@@ -1,0 +1,5 @@
+samples=100 ok=100
+lat_ms_min=41 p50=47 p95=52 p99=76 max=92
+poll_interval_s=3
+duty_cycle_est_p50=0.0157  # p50_ms/3000
+note=CPU/power: duty-cycle proxy only; no external ammeter

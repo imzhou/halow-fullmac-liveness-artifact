@@ -1,0 +1,17 @@
+=== EMS mode=stock peers=172.16.0.100 ===
+baseline alive=0 sta_count=1
+inject: ip link down/up hg0 (provokes control-plane churn)
+t=0s alive=0 sta_count=1 mis=1
+t=4s alive=0 sta_count=1 mis=1
+t=8s alive=0 sta_count=1 mis=1
+t=11s alive=0 sta_count=1 mis=1
+t=15s alive=0 sta_count=1 mis=1
+t=19s alive=0 sta_count=1 mis=1
+t=22s alive=0 sta_count=1 mis=1
+t=26s alive=0 sta_count=1 mis=1
+t=30s alive=0 sta_count=1 mis=1
+t=34s alive=0 sta_count=1 mis=1
+t=37s alive=0 sta_count=1 mis=1
+t=41s alive=0 sta_count=1 mis=1
+self_heal=0 mismatch_final=1 alive=0 sta_count=1 mode=stock
+=== EMS done ===

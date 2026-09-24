@@ -1,0 +1,14 @@
+t,mode,alive,sta_count,mismatch,action
+1790078764,lhr,2,2,0,baseline
+1790078771,lhr,0,0,0,none
+1790078776,lhr,0,2,1,reconcile_rebind
+1790078780,lhr,2,2,0,none
+1790078783,lhr,2,2,0,none
+1790078786,lhr,2,2,0,none
+1790078790,lhr,2,2,0,none
+1790078793,lhr,2,2,0,none
+1790078796,lhr,2,2,0,none
+1790078799,lhr,2,2,0,none
+1790078803,lhr,2,2,0,none
+1790078806,lhr,2,2,0,none
+1790078809,lhr,2,2,0,none
